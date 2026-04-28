@@ -1,3 +1,4 @@
+import hmac
 import sys
 from pathlib import Path
 
@@ -49,6 +50,40 @@ ALLOC_COLOURS = {
     "Cash":       "#6B7280",
 }
 
+
+def _is_authenticated() -> bool:
+    return bool(st.session_state.get("authenticated", False))
+
+
+def _check_password(password: str) -> bool:
+    expected = settings.dashboard_password or ""
+    return bool(expected) and hmac.compare_digest(password, expected)
+
+
+def require_authentication() -> None:
+    if _is_authenticated():
+        return
+
+    st.title("Ariete Invest Investor Portal")
+
+    if not settings.dashboard_password:
+        st.error("Access is locked because DASHBOARD_PASSWORD is not configured.")
+        st.info("Set DASHBOARD_PASSWORD in Render environment variables, then redeploy.")
+        st.stop()
+
+    st.caption("Enter the company password to view the dashboard.")
+    with st.form("login_form", clear_on_submit=False):
+        password = st.text_input("Password", type="password")
+        submitted = st.form_submit_button("Sign in", use_container_width=True)
+
+    if submitted:
+        if _check_password(password):
+            st.session_state["authenticated"] = True
+            st.rerun()
+        st.error("Incorrect password.")
+
+    st.stop()
+
 # ── Data loading (cached) ─────────────────────────────────────────────────────
 
 @st.cache_data(show_spinner="Loading workbook…")
@@ -66,12 +101,17 @@ def load_data():
     pm     = data.portfolio_metrics
     return kpis, ts, alloc, irr, risk, dist, tgt, holds, warns, pm
 
+require_authentication()
+
 kpis, ts, alloc, irr, risk, dist, tgt, holds, warns, pm = load_data()
 
 # ── Reload button ─────────────────────────────────────────────────────────────
 
 with st.sidebar:
     st.title("Controls")
+    if st.button("Sign out", use_container_width=True):
+        st.session_state["authenticated"] = False
+        st.rerun()
     if st.button("🔄 Reload Excel", use_container_width=True):
         st.cache_data.clear()
         st.rerun()

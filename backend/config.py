@@ -1,4 +1,5 @@
 from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -8,8 +9,11 @@ class Settings(BaseSettings):
     excel_path: Path = Path(__file__).parent.parent / "Ariete Invest - Report Model.xlsx"
 
     # Investor identity (cosmetic labels only)
-    investor_name: str = "Vasco Varão"
+    investor_name: str = "Vasco Varo"
     portfolio_id: str = "AI-0042"
+
+    # Access control
+    dashboard_password: str | None = None
 
     # Financial config
     risk_free_rate: float = 0.035        # annual, used for Sharpe
