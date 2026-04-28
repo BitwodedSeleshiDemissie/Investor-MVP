@@ -1,0 +1,311 @@
+import sys
+from pathlib import Path
+
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import streamlit as st
+
+sys.path.insert(0, str(Path(__file__).parent))
+
+from calculations import (
+    BETA_UNAVAILABLE_WARNING,
+    check_nav_reconciliation,
+    compute_allocation,
+    compute_distributions,
+    compute_holdings,
+    compute_irr,
+    compute_kpis,
+    compute_risk,
+    compute_targets,
+    compute_timeseries,
+)
+from config import settings
+from excel_loader import load_workbook
+
+# ── Page config ───────────────────────────────────────────────────────────────
+
+st.set_page_config(
+    page_title="Ariete Invest — Investor Portal",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
+
+# ── Colours ───────────────────────────────────────────────────────────────────
+
+ORANGE = "#F97316"
+GREEN  = "#22C55E"
+RED    = "#EF4444"
+MUTED  = "#6B7280"
+BG     = "#1A1D27"
+CARD   = "#23263A"
+
+ALLOC_COLOURS = {
+    "Stocks":     "#F97316",
+    "Bonds":      "#3B82F6",
+    "ETFs / ETCs":"#8B5CF6",
+    "Crypto ETPs":"#F59E0B",
+    "Cash":       "#6B7280",
+}
+
+# ── Data loading (cached) ─────────────────────────────────────────────────────
+
+@st.cache_data(show_spinner="Loading workbook…")
+def load_data():
+    data = load_workbook(settings.excel_path)
+    kpis   = compute_kpis(data, settings)
+    ts     = compute_timeseries(data)
+    alloc  = compute_allocation(data)
+    irr    = compute_irr(data)
+    risk   = compute_risk(data, settings)
+    dist   = compute_distributions(data)
+    tgt    = compute_targets(data, settings)
+    holds  = compute_holdings(data)
+    warns  = check_nav_reconciliation(data, settings.nav_reconciliation_tolerance)
+    pm     = data.portfolio_metrics
+    return kpis, ts, alloc, irr, risk, dist, tgt, holds, warns, pm
+
+kpis, ts, alloc, irr, risk, dist, tgt, holds, warns, pm = load_data()
+
+# ── Reload button ─────────────────────────────────────────────────────────────
+
+with st.sidebar:
+    st.title("Controls")
+    if st.button("🔄 Reload Excel", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+    st.caption(f"As of **{holds.cutoff_date}**")
+    st.caption(f"Investor: **{settings.investor_name}**")
+    st.caption(f"Portfolio: **{settings.portfolio_id}**")
+
+# ── Header ────────────────────────────────────────────────────────────────────
+
+st.markdown(f"## 📊 Ariete Invest — Investor Dashboard")
+st.markdown(f"<span style='color:{MUTED}'>As of {holds.cutoff_date} &nbsp;·&nbsp; {settings.investor_name} &nbsp;·&nbsp; {settings.portfolio_id}</span>", unsafe_allow_html=True)
+
+if warns:
+    for w in warns:
+        st.warning(f"**{w.code}**: {w.message}", icon="⚠️")
+
+st.divider()
+
+# ── Helper: colour a delta ────────────────────────────────────────────────────
+
+def _pct(v: float) -> str:
+    return f"{v:+.2%}"
+
+def _eur(v: float) -> str:
+    return f"€{v:,.0f}"
+
+# ── KPI Cards ─────────────────────────────────────────────────────────────────
+
+c1, c2, c3, c4, c5, c6 = st.columns(6)
+
+c1.metric("Portfolio Value",  _eur(kpis.total_portfolio_value),
+          delta=_pct(kpis.pct_since_entry))
+
+c2.metric("Capital Committed", _eur(kpis.capital_committed))
+
+c3.metric("MOIC",
+          f"{kpis.moic:.3f}×",
+          delta=f"target {kpis.moic_target:.1f}×",
+          delta_color="off")
+
+c4.metric("Investor IRR",  _pct(irr.investor_irr))
+
+c5.metric("Current Yield", _pct(kpis.current_yield))
+
+c6.metric("Total Income",
+          _eur(kpis.distributions_total),
+          delta=f"{kpis.distributions_count} payments",
+          delta_color="off")
+
+st.divider()
+
+# ── NAV Chart + Allocation ────────────────────────────────────────────────────
+
+col_nav, col_alloc = st.columns([3, 2])
+
+with col_nav:
+    st.subheader("Portfolio Value Over Time")
+
+    nav_df = pd.DataFrame([
+        {"Month": p.month_end, "NAV (€)": p.nav, "TWR Return": p.cumulative_return}
+        for p in ts.series
+    ])
+
+    fig_nav = go.Figure()
+    fig_nav.add_trace(go.Scatter(
+        x=nav_df["Month"], y=nav_df["NAV (€)"],
+        mode="lines+markers",
+        name="NAV",
+        line=dict(color=ORANGE, width=2.5),
+        marker=dict(size=5),
+        hovertemplate="%{x|%b %Y}<br>€%{y:,.0f}<extra></extra>",
+    ))
+    # Dashed TWR index on secondary axis
+    twr_base = nav_df["TWR Return"].iloc[0] if not nav_df.empty else 0
+    fig_nav.add_trace(go.Scatter(
+        x=nav_df["Month"],
+        y=(1 + nav_df["TWR Return"]) * 100,
+        mode="lines",
+        name="TWR Index (base 100)",
+        line=dict(color=GREEN, width=1.5, dash="dash"),
+        yaxis="y2",
+        hovertemplate="%{x|%b %Y}<br>TWR index: %{y:.1f}<extra></extra>",
+    ))
+    fig_nav.update_layout(
+        paper_bgcolor=BG, plot_bgcolor=BG,
+        font_color="#FAFAFA",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        yaxis=dict(title="NAV (€)", tickformat="€,.0f", gridcolor="#2D3147"),
+        yaxis2=dict(title="TWR Index", overlaying="y", side="right",
+                    tickformat=".0f", gridcolor="#2D3147"),
+        xaxis=dict(gridcolor="#2D3147"),
+        margin=dict(l=0, r=0, t=30, b=0),
+        hovermode="x unified",
+    )
+    st.plotly_chart(fig_nav, use_container_width=True)
+
+with col_alloc:
+    st.subheader("Current Allocation")
+
+    alloc_df = pd.DataFrame([
+        {"Asset Class": s.asset_class, "Value": s.market_value, "Weight": s.weight}
+        for s in alloc.slices
+    ])
+    colours = [ALLOC_COLOURS.get(ac, "#CBD5E1") for ac in alloc_df["Asset Class"]]
+
+    fig_pie = go.Figure(go.Pie(
+        labels=alloc_df["Asset Class"],
+        values=alloc_df["Weight"],
+        hole=0.55,
+        marker_colors=colours,
+        textinfo="label+percent",
+        hovertemplate="%{label}<br>€%{customdata:,.0f}<br>%{percent}<extra></extra>",
+        customdata=alloc_df["Value"],
+    ))
+    fig_pie.update_layout(
+        paper_bgcolor=BG,
+        font_color="#FAFAFA",
+        showlegend=False,
+        margin=dict(l=0, r=0, t=10, b=0),
+    )
+    st.plotly_chart(fig_pie, use_container_width=True)
+
+st.divider()
+
+# ── Risk + IRR + Target ───────────────────────────────────────────────────────
+
+col_risk, col_irr, col_target = st.columns(3)
+
+with col_risk:
+    st.subheader("Risk Metrics")
+    st.metric("Sharpe Ratio",       f"{risk.sharpe_ratio:.3f}")
+    st.metric("Ann. Volatility",    _pct(risk.volatility_annualized))
+    st.metric("Max Drawdown",       _pct(risk.max_drawdown))
+    st.metric("Ann. Return (TWR)",  _pct(risk.annualized_return))
+    st.metric("Risk-Free Rate",     _pct(risk.risk_free_rate))
+    st.metric("Data Window",        f"{risk.data_window_months} months")
+    if risk.beta_vs_msci_world is None:
+        st.caption("β vs MSCI World: n/a (no benchmark data)")
+
+with col_irr:
+    st.subheader("IRR Analysis")
+    st.metric("Investor IRR",  _pct(irr.investor_irr))
+    st.metric("Fund IRR",      _pct(irr.fund_irr))
+    st.metric("Valuation Date", str(irr.valuation_date))
+    st.divider()
+    st.subheader("P&L Breakdown")
+    st.metric("Unrealized P&L", _eur(float(pm.get("Total Unrealized P&L", 0))))
+    st.metric("Realized P&L",   _eur(float(pm.get("Total Realized P&L", 0))))
+    st.metric("Net Total P&L",  _eur(float(pm.get("Net Total P&L", 0))))
+
+with col_target:
+    st.subheader("Target vs Actual")
+
+    target_df = pd.DataFrame([
+        {"Class": "Equities", "Target": tgt.target_equity_pct,   "Actual": tgt.current_equity_pct},
+        {"Class": "Bonds",    "Target": tgt.target_bond_pct,     "Actual": tgt.current_bond_pct},
+        {"Class": "Alts",     "Target": tgt.target_alt_pct,      "Actual": tgt.current_alt_pct},
+        {"Class": "Cash",     "Target": 0.0,                      "Actual": tgt.current_cash_pct},
+    ])
+    target_long = target_df.melt(id_vars="Class", var_name="Series", value_name="Weight")
+
+    fig_bar = px.bar(
+        target_long, x="Class", y="Weight", color="Series",
+        barmode="group",
+        color_discrete_map={"Target": ORANGE, "Actual": GREEN},
+        labels={"Weight": "Allocation"},
+        text_auto=".0%",
+    )
+    fig_bar.update_layout(
+        paper_bgcolor=BG, plot_bgcolor=BG,
+        font_color="#FAFAFA",
+        yaxis=dict(tickformat=".0%", gridcolor="#2D3147"),
+        xaxis=dict(gridcolor="#2D3147"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        margin=dict(l=0, r=0, t=30, b=0),
+    )
+    st.plotly_chart(fig_bar, use_container_width=True)
+
+st.divider()
+
+# ── Distributions Table ───────────────────────────────────────────────────────
+
+st.subheader(f"Income Received  ·  Total: **{_eur(dist.total)}**")
+
+dist_df = pd.DataFrame([
+    {"Date": e.date, "Security": e.security, "Type": e.income_type, "Amount (€)": e.amount}
+    for e in dist.events
+])
+
+if not dist_df.empty:
+    dist_df = dist_df.sort_values("Date", ascending=False)
+    st.dataframe(
+        dist_df.style.format({"Amount (€)": "€{:,.2f}"}),
+        use_container_width=True,
+        hide_index=True,
+        height=300,
+    )
+
+st.divider()
+
+# ── Holdings Table ────────────────────────────────────────────────────────────
+
+st.subheader(f"Holdings  ·  {len([h for h in holds.holdings if h.shares > 0])} open positions")
+
+holds_df = pd.DataFrame([
+    {
+        "Security":    h.security,
+        "Class":       h.asset_class,
+        "CCY":         h.currency,
+        "Shares":      h.shares,
+        "Avg Cost":    h.avg_cost,
+        "Market Val":  h.market_value,
+        "Unreal. P&L": h.unrealized_pnl,
+        "P&L %":       h.pnl_pct,
+        "Weight":      h.weight,
+    }
+    for h in holds.holdings
+    if h.shares > 0   # only open positions
+])
+
+def _colour_pnl(val: float) -> str:
+    return f"color: {GREEN}" if val >= 0 else f"color: {RED}"
+
+if not holds_df.empty:
+    holds_df = holds_df.sort_values("Market Val", ascending=False)
+    st.dataframe(
+        holds_df.style.format({
+            "Avg Cost":    "{:.3f}",
+            "Market Val":  "€{:,.0f}",
+            "Unreal. P&L": "€{:,.0f}",
+            "P&L %":       "{:.2%}",
+            "Weight":      "{:.2%}",
+        }).map(_colour_pnl, subset=["P&L %", "Unreal. P&L"]),
+        use_container_width=True,
+        hide_index=True,
+        height=500,
+    )

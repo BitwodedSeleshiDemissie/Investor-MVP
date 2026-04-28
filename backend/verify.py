@@ -1,0 +1,91 @@
+import sys
+sys.path.insert(0, '.')
+from excel_loader import load_workbook
+from calculations import compute_kpis, compute_irr, compute_risk, compute_allocation, compute_targets, compute_distributions
+from config import settings
+
+data = load_workbook(settings.excel_path)
+pm = data.portfolio_metrics
+kpis = compute_kpis(data, settings)
+irr  = compute_irr(data)
+risk = compute_risk(data, settings)
+alloc = compute_allocation(data)
+tgt = compute_targets(data, settings)
+dist = compute_distributions(data)
+
+income_key = "Total Income (Div+Cpn+Dist)"
+income_val = pm[income_key]
+
+print("=== KPI CARDS ===")
+print(f"  total_portfolio_value : {kpis.total_portfolio_value}")
+print(f"    SOURCE -> pm['Total Portfolio Value'] = {pm['Total Portfolio Value']}")
+print()
+print(f"  capital_committed     : {kpis.capital_committed}")
+print(f"    SOURCE -> pm['Total Invested Capital'] = {pm['Total Invested Capital']}")
+print()
+print(f"  pct_since_entry       : {kpis.pct_since_entry:.6f}")
+print(f"    SOURCE -> (NAV - committed) / committed")
+print()
+print(f"  moic                  : {kpis.moic:.6f}")
+print(f"    SOURCE -> (NAV + total_income) / committed = ({kpis.total_portfolio_value} + {income_val}) / {kpis.capital_committed}")
+print()
+print(f"  investor_irr          : {irr.investor_irr}")
+print(f"    SOURCE -> XIRR on {len(data.irr_investor)} rows from IRR Analysis sheet + terminal value")
+print(f"    Excel pre-computed  : {pm['Investor IRR']}  <- should match")
+print()
+print(f"  fund_irr              : {irr.fund_irr}")
+print(f"    SOURCE -> XIRR on {len(data.irr_portfolio)} rows from IRR Analysis sheet + terminal value")
+print(f"    Excel pre-computed  : {pm['Company IRR']}  <- should match")
+print()
+print(f"  current_yield         : {kpis.current_yield:.6f}")
+print(f"    SOURCE -> total_income / NAV = {income_val} / {kpis.total_portfolio_value}")
+print()
+print(f"  distributions_total   : {kpis.distributions_total}")
+income_rows = data.trade_log[data.trade_log["Type"].isin(["Dividend","Coupon","Distribution","Sec. Lending"])]
+print(f"    SOURCE -> sum(Net Amount) for income rows in Trade Log = {income_rows['Net Amount'].sum():.2f}")
+print()
+
+print("=== RISK METRICS ===")
+print(f"  sharpe_ratio          : {risk.sharpe_ratio}")
+print(f"    Excel pre-computed  : {pm['Sharpe Ratio']}  <- should match")
+print(f"    SOURCE -> (ann_return - rf) / vol_ann")
+print()
+print(f"  volatility_annualized : {risk.volatility_annualized:.6f}")
+print(f"    SOURCE -> std(monthly_returns) * sqrt(12) from Monthly Returns sheet")
+print(f"    Excel monthly std   : {pm['Monthly Std Dev']} -> annualized: {pm['Monthly Std Dev'] * 12**0.5:.6f}")
+print()
+print(f"  max_drawdown          : {risk.max_drawdown}")
+print(f"    Excel pre-computed  : {pm['Max Drawdown']}  <- should match")
+print()
+print(f"  annualized_return     : {risk.annualized_return}")
+print(f"    SOURCE -> pm['Annualized Return (TWR)'] = {pm['Annualized Return (TWR)']}")
+print()
+print(f"  risk_free_rate        : {risk.risk_free_rate}")
+print(f"    SOURCE -> config.py (matches Excel value: {pm['Risk-Free Rate (annual)']})")
+print()
+
+print("=== ALLOCATION ===")
+for s in alloc.slices:
+    print(f"  {s.asset_class:<20} mv={s.market_value:>12,.2f}  weight={s.weight:.4f}")
+print(f"  SOURCE -> Holdings sheet grouped by Asset Class + Cash from Portfolio Metrics")
+print()
+
+print("=== TARGET VS ACTUAL ===")
+print(f"  targets equity/bond/alt: {tgt.target_equity_pct}/{tgt.target_bond_pct}/{tgt.target_alt_pct}  <- CONFIG values")
+print(f"  actual equity          : {tgt.current_equity_pct:.4f}  <- Holdings Stock MV / NAV")
+print(f"  actual bond            : {tgt.current_bond_pct:.4f}  <- Holdings Bond MV / NAV")
+print(f"  actual alt             : {tgt.current_alt_pct:.4f}  <- Holdings ETF+Crypto MV / NAV")
+print(f"  actual cash            : {tgt.current_cash_pct:.4f}  <- Portfolio Metrics Cash / NAV")
+print()
+
+print("=== INCOME TABLE ===")
+print(f"  {len(dist.events)} events, total={dist.total}")
+print(f"  SOURCE -> Trade Log rows where Type in Dividend/Coupon/Distribution/Sec. Lending")
+print()
+
+print("=== CONFIG-ONLY VALUES (not read from Excel) ===")
+print(f"  moic_target        : {kpis.moic_target}  (config.py)")
+print(f"  risk_free_rate     : {risk.risk_free_rate}  (config.py — also present in Excel at same value)")
+print(f"  target allocations : {tgt.target_equity_pct}/{tgt.target_bond_pct}/{tgt.target_alt_pct}  (config.py)")
+print(f"  investor_name      : '{settings.investor_name}'  (config.py — not in Excel)")
+print(f"  portfolio_id       : '{settings.portfolio_id}'  (config.py — not in Excel)")
