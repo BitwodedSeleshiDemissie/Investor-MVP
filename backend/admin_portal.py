@@ -1,5 +1,4 @@
 import hmac
-import subprocess
 import sys
 from datetime import date
 from pathlib import Path
@@ -98,24 +97,6 @@ def _default_as_of_date() -> date:
         return date.today()
 
 
-def regenerate_workbook() -> None:
-    if db_enabled():
-        st.success("Information uploaded and available to the investor portal.")
-        return
-    proc = subprocess.run(
-        [sys.executable, "preprocess.py", "--portal-workbook", str(settings.excel_path), "--copy-to-portal"],
-        cwd=PREPROCESSING_DIR,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        timeout=180,
-    )
-    if proc.returncode == 0:
-        st.success("Information uploaded and published to the investor portal.")
-    else:
-        st.error("Upload failed. Please check the uploaded files and try again.")
-
-
 def _save_dictionary(row: dict) -> None:
     if db_enabled():
         upsert_asset_dictionary(row)
@@ -149,8 +130,6 @@ with st.sidebar:
     if st.button("Sign out", use_container_width=True):
         st.session_state["admin_authenticated"] = False
         st.rerun()
-    if st.button("Upload information", use_container_width=True):
-        regenerate_workbook()
 
 st.title("Ariete Admin Upload Portal")
 
@@ -165,7 +144,7 @@ if upload_type == "Listed instruments":
     uploads = st.file_uploader("Monthly statement CSV files", type=["csv"], accept_multiple_files=True)
     if st.button("Save listed files", use_container_width=True):
         if db_enabled():
-            st.info("Listed file preprocessing stays in the preprocessing pipeline. Non-listed/cash/controls are already cloud-synced.")
+            st.info("Listed files are saved. Non-listed/cash/portfolio inputs are committed immediately to cloud data.")
         saved = 0
         for upload in uploads or []:
             target = PREPROCESSING_DIR / Path(upload.name).name
