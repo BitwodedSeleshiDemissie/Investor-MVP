@@ -180,7 +180,13 @@ def _summary_total(section: str) -> float:
             return float(cloud_snapshot.non_listed_total)
         if section == "Cash":
             directa_cash = float(_metric_value("Directa Cash", default=0.0))
-            return float(directa_cash + cloud_snapshot.cash_total)
+            cash_rows = _cloud_detail_rows("Cash")
+            external_and_receivables = (
+                float(pd.to_numeric(cash_rows["value"], errors="coerce").fillna(0).sum())
+                if (not cash_rows.empty and "value" in cash_rows.columns)
+                else float(cloud_snapshot.cash_total)
+            )
+            return float(directa_cash + external_and_receivables)
     rows = _summary_rows(section)
     if rows.empty or "value" not in rows.columns:
         return 0.0
@@ -341,7 +347,7 @@ if view == "Cash":
         st.info("No cash breakdown is available yet.")
     else:
         st.metric("Total Cash", _eur(_summary_total("Cash")))
-        st.caption("Directa cash is reconstructed automatically; external and restricted cash come from admin monthly values.")
+        st.caption("Directa cash is reconstructed automatically; external cash and short term receivable come from admin values.")
         display_cols = [
             "display_name", "subcategory", "value", "currency",
             "as_of_date", "source", "method", "notes",

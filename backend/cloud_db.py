@@ -93,6 +93,15 @@ def init_schema() -> None:
                 ON admin_manual_values (item_key, as_of_date, created_at);
                 """
             )
+            # Backward-compatibility rename requested by CFO.
+            cur.execute(
+                """
+                UPDATE asset_dictionary
+                SET display_name = 'Short Term Receivable EUR',
+                    subcategory = 'Short Term Receivable'
+                WHERE item_key = 'RESTRICTED_CASH_EUR';
+                """
+            )
         conn.commit()
 
 
@@ -208,21 +217,16 @@ def read_snapshot(cutoff: date) -> CloudAdminSnapshot:
 
             cur.execute(
                 """
-                WITH latest AS (
-                    SELECT mv.item_key, MAX(mv.as_of_date) AS as_of_date
+                WITH picked AS (
+                    SELECT DISTINCT ON (mv.item_key)
+                        mv.item_key,
+                        mv.value
                     FROM admin_manual_values mv
-                    WHERE mv.as_of_date <= %s
-                    GROUP BY mv.item_key
-                ),
-                picked AS (
-                    SELECT mv.item_key, mv.value
-                    FROM admin_manual_values mv
-                    JOIN latest l
-                      ON l.item_key = mv.item_key
-                     AND l.as_of_date = mv.as_of_date
                     JOIN asset_dictionary d
                       ON d.item_key = mv.item_key
-                    WHERE d.active = TRUE
+                    WHERE mv.as_of_date <= %s
+                      AND d.active = TRUE
+                    ORDER BY mv.item_key, mv.as_of_date DESC, mv.created_at DESC
                 )
                 SELECT d.item_type, COALESCE(SUM(p.value), 0) AS total
                 FROM picked p

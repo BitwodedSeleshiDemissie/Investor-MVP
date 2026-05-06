@@ -77,7 +77,14 @@ def _append_row(path: Path, row: dict) -> None:
 
 def _active_dictionary() -> pd.DataFrame:
     if db_enabled():
-        return pd.DataFrame(read_active_dictionary())
+        df = pd.DataFrame(read_active_dictionary())
+        if not df.empty and "item_key" in df.columns:
+            mask = df["item_key"].astype(str) == "RESTRICTED_CASH_EUR"
+            if "display_name" in df.columns:
+                df.loc[mask, "display_name"] = "Short Term Receivable EUR"
+            if "subcategory" in df.columns:
+                df.loc[mask, "subcategory"] = "Short Term Receivable"
+        return df
     df = _read_csv(DICTIONARY_PATH)
     if df.empty:
         return df
@@ -188,7 +195,7 @@ elif upload_type == "Non-listed values":
         labels = {row["item_key"]: f"{row['display_name']} ({row['subcategory']})" for _, row in non_listed.iterrows()}
         with st.form("nonlisted_value"):
             item_key = st.selectbox("Non-listed company", list(labels.keys()), format_func=lambda k: labels[k])
-            holding_name = st.text_input("Holding name (optional)", placeholder="Bending Spoons")
+            holding_name = st.text_input("Holding name (optional)")
             as_of_date = st.date_input("Valuation date", value=default_as_of_date)
             value = st.number_input("Latest approved valuation", min_value=0.0, step=1000.0)
             submitted = st.form_submit_button("Save non-listed value", use_container_width=True)
