@@ -21,6 +21,7 @@ from calculations import (
     compute_targets,
     compute_timeseries,
 )
+from cloud_db import db_enabled, init_schema, read_snapshot
 from config import settings
 from excel_loader import load_workbook
 
@@ -112,8 +113,17 @@ def _workbook_mtime_ns() -> int:
         return 0
 
 require_authentication()
+if db_enabled():
+    init_schema()
 
 kpis, ts, alloc, irr, risk, dist, tgt, holds, warns, pm, dashboard_summary = load_data(_workbook_mtime_ns())
+cloud_snapshot = None
+if db_enabled():
+    try:
+        cloud_snapshot = read_snapshot(holds.cutoff_date)
+    except Exception as exc:
+        st.warning(f"Cloud data unavailable: {exc}")
+        cloud_snapshot = None
 
 # ── Reload button ─────────────────────────────────────────────────────────────
 
@@ -163,6 +173,11 @@ def _metric_value(*labels: str, default: float = 0.0) -> float:
     return default
 
 def _summary_total(section: str) -> float:
+    if cloud_snapshot is not None:
+        if section == "Non-Listed":
+            return float(cloud_snapshot.non_listed_total)
+        if section == "Cash":
+            return float(cloud_snapshot.cash_total)
     rows = _summary_rows(section)
     if rows.empty or "value" not in rows.columns:
         return 0.0
@@ -314,12 +329,27 @@ if view == "Listed":
     st.subheader("Listed / Market-Priced Assets")
     st.caption("This section uses the existing Directa/Vasco preprocessing flow and keeps listed-market metrics such as TWR, volatility, Sharpe, and drawdown.")
 
+capital_committed_display = float(kpis.capital_committed)
+if cloud_snapshot is not None and cloud_snapshot.capital_committed is not None:
+    capital_committed_display = float(cloud_snapshot.capital_committed)
+    kpis = kpis.model_copy(
+        update={
+            "capital_committed": capital_committed_display,
+            "pct_since_entry": ((kpis.total_portfolio_value - capital_committed_display) / capital_committed_display)
+            if capital_committed_display
+            else 0.0,
+            "moic": ((kpis.total_portfolio_value + kpis.distributions_total) / capital_committed_display)
+            if capital_committed_display
+            else 0.0,
+        }
+    )
+
 c1, c2, c3, c4, c5, c6 = st.columns(6)
 
 c1.metric("Portfolio Value",  _eur(kpis.total_portfolio_value),
           delta=_pct(kpis.pct_since_entry))
 
-c2.metric("Capital Committed", _eur(kpis.capital_committed))
+c2.metric("Capital Committed", _eur(capital_committed_display))
 
 c3.metric("MOIC",
           f"{kpis.moic:.3f}×",

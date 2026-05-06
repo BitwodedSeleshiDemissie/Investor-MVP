@@ -9,3 +9,4 @@ pyxirr
 pydantic
 pydantic-settings
 httpx
+psycopg[binary]

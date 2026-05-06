@@ -10,6 +10,16 @@ from openpyxl import load_workbook
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+from cloud_db import (
+    db_enabled,
+    init_schema,
+    insert_control,
+    insert_manual_value,
+    read_active_dictionary,
+    read_controls,
+    read_manual_values,
+    upsert_asset_dictionary,
+)
 from config import settings
 
 
@@ -39,22 +49,18 @@ def _check_password(password: str) -> bool:
 def require_authentication() -> None:
     if _is_authenticated():
         return
-
     st.title("Ariete Admin Upload Portal")
     if not settings.dashboard_password:
         st.error("Access is locked because DASHBOARD_PASSWORD is not configured.")
         st.stop()
-
     with st.form("admin_login", clear_on_submit=False):
         password = st.text_input("Password", type="password")
         submitted = st.form_submit_button("Sign in", use_container_width=True)
-
     if submitted:
         if _check_password(password):
             st.session_state["admin_authenticated"] = True
             st.rerun()
         st.error("Incorrect password.")
-
     st.stop()
 
 
@@ -67,11 +73,12 @@ def _read_csv(path: Path) -> pd.DataFrame:
 def _append_row(path: Path, row: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     existing = _read_csv(path)
-    next_df = pd.concat([existing, pd.DataFrame([row])], ignore_index=True)
-    next_df.to_csv(path, index=False)
+    pd.concat([existing, pd.DataFrame([row])], ignore_index=True).to_csv(path, index=False)
 
 
 def _active_dictionary() -> pd.DataFrame:
+    if db_enabled():
+        return pd.DataFrame(read_active_dictionary())
     df = _read_csv(DICTIONARY_PATH)
     if df.empty:
         return df
@@ -92,14 +99,11 @@ def _default_as_of_date() -> date:
 
 
 def regenerate_workbook() -> None:
+    if db_enabled():
+        st.success("Information uploaded and available to the investor portal.")
+        return
     proc = subprocess.run(
-        [
-            sys.executable,
-            "preprocess.py",
-            "--portal-workbook",
-            str(settings.excel_path),
-            "--copy-to-portal",
-        ],
+        [sys.executable, "preprocess.py", "--portal-workbook", str(settings.excel_path), "--copy-to-portal"],
         cwd=PREPROCESSING_DIR,
         text=True,
         stdout=subprocess.PIPE,
@@ -112,7 +116,32 @@ def regenerate_workbook() -> None:
         st.error("Upload failed. Please check the uploaded files and try again.")
 
 
+def _save_dictionary(row: dict) -> None:
+    if db_enabled():
+        upsert_asset_dictionary(row)
+        return
+    local = row.copy()
+    local["active"] = "true" if row.get("active", True) else "false"
+    _append_row(DICTIONARY_PATH, local)
+
+
+def _save_manual_value(row: dict) -> None:
+    if db_enabled():
+        insert_manual_value(row)
+    else:
+        _append_row(MANUAL_VALUES_PATH, row)
+
+
+def _save_control(row: dict) -> None:
+    if db_enabled():
+        insert_control(row)
+    else:
+        _append_row(CONTROLS_PATH, row)
+
+
 require_authentication()
+if db_enabled():
+    init_schema()
 default_as_of_date = _default_as_of_date()
 
 with st.sidebar:
@@ -133,54 +162,51 @@ upload_type = st.radio(
 
 if upload_type == "Listed instruments":
     st.subheader("Listed Instruments")
-    uploads = st.file_uploader(
-        "Monthly statement CSV files",
-        type=["csv"],
-        accept_multiple_files=True,
-    )
+    uploads = st.file_uploader("Monthly statement CSV files", type=["csv"], accept_multiple_files=True)
     if st.button("Save listed files", use_container_width=True):
+        if db_enabled():
+            st.info("Listed file preprocessing stays in the preprocessing pipeline. Non-listed/cash/controls are already cloud-synced.")
         saved = 0
         for upload in uploads or []:
             target = PREPROCESSING_DIR / Path(upload.name).name
+            target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(upload.getbuffer())
             saved += 1
-        st.success(f"Saved {saved} file(s). Run regeneration when ready.")
+        st.success(f"Saved {saved} file(s).")
 
 elif upload_type == "Non-listed values":
-    st.subheader("Non-Listed Monthly Values")
-
+    st.subheader("Non-Listed Values")
     dictionary = _active_dictionary()
     non_listed = dictionary[dictionary.get("item_type", "").astype(str) == "Non-Listed"] if not dictionary.empty else pd.DataFrame()
 
-    with st.expander("Add non-listed asset to dictionary"):
+    with st.expander("Add non-listed asset"):
         with st.form("add_nonlisted_dictionary"):
             item_key = st.text_input("Asset key", placeholder="PRIVATE_EQUITY_002")
             display_name = st.text_input("Display name", placeholder="Private Equity Holding B")
-            subcategory = st.text_input("Subcategory", placeholder="Private Equity / Private Debt / Unlisted Fund")
+            subcategory = st.text_input("Subcategory", placeholder="Private Equity")
             currency = st.text_input("Currency", value="EUR")
             sort_order = st.number_input("Sort order", min_value=0, step=1, value=10)
             submitted = st.form_submit_button("Add non-listed asset", use_container_width=True)
             if submitted and item_key:
-                _append_row(DICTIONARY_PATH, {
-                    "item_key": item_key,
-                    "display_name": display_name,
-                    "item_type": "Non-Listed",
-                    "subcategory": subcategory,
-                    "currency": currency,
-                    "active": "true",
-                    "sort_order": sort_order,
-                    "notes": "",
-                })
+                _save_dictionary(
+                    {
+                        "item_key": item_key,
+                        "display_name": display_name,
+                        "item_type": "Non-Listed",
+                        "subcategory": subcategory,
+                        "currency": currency,
+                        "active": True,
+                        "sort_order": sort_order,
+                        "notes": "",
+                    }
+                )
                 st.success("Non-listed asset added.")
                 st.rerun()
 
     if non_listed.empty:
         st.info("No active non-listed assets are available yet.")
     else:
-        labels = {
-            row["item_key"]: f"{row['display_name']} ({row['subcategory']})"
-            for _, row in non_listed.iterrows()
-        }
+        labels = {row["item_key"]: f"{row['display_name']} ({row['subcategory']})" for _, row in non_listed.iterrows()}
         with st.form("nonlisted_value"):
             item_key = st.selectbox("Non-listed asset", list(labels.keys()), format_func=lambda k: labels[k])
             as_of_date = st.date_input("Valuation date", value=default_as_of_date)
@@ -188,52 +214,52 @@ elif upload_type == "Non-listed values":
             submitted = st.form_submit_button("Save non-listed value", use_container_width=True)
             if submitted:
                 selected = non_listed[non_listed["item_key"].astype(str) == str(item_key)].iloc[0]
-                _append_row(MANUAL_VALUES_PATH, {
-                    "as_of_date": as_of_date.isoformat(),
-                    "item_key": item_key,
-                    "value": value,
-                    "currency": selected.get("currency", "EUR"),
-                    "valuation_source": "Admin input",
-                    "valuation_method": "Monthly approved value",
-                    "notes": "",
-                })
+                _save_manual_value(
+                    {
+                        "as_of_date": as_of_date.isoformat(),
+                        "item_key": item_key,
+                        "value": value,
+                        "currency": selected.get("currency", "EUR"),
+                        "valuation_source": "Admin input",
+                        "valuation_method": "Monthly approved value",
+                        "notes": "",
+                    }
+                )
                 st.success("Non-listed value saved.")
 
 elif upload_type == "Cash values":
     st.subheader("Cash Values")
-
     dictionary = _active_dictionary()
     cash_items = dictionary[dictionary.get("item_type", "").astype(str) == "Cash"] if not dictionary.empty else pd.DataFrame()
 
-    with st.expander("Add cash option to dictionary"):
+    with st.expander("Add cash option"):
         with st.form("add_cash_dictionary"):
             item_key = st.text_input("Cash key", placeholder="EXTERNAL_CASH_USD")
             display_name = st.text_input("Display name", placeholder="External Cash USD")
-            subcategory = st.text_input("Subcategory", placeholder="External Bank Cash / Restricted Cash")
+            subcategory = st.text_input("Subcategory", placeholder="External Bank Cash")
             currency = st.text_input("Currency", value="EUR")
             sort_order = st.number_input("Sort order", min_value=0, step=1, value=20)
             submitted = st.form_submit_button("Add cash option", use_container_width=True)
             if submitted and item_key:
-                _append_row(DICTIONARY_PATH, {
-                    "item_key": item_key,
-                    "display_name": display_name,
-                    "item_type": "Cash",
-                    "subcategory": subcategory,
-                    "currency": currency,
-                    "active": "true",
-                    "sort_order": sort_order,
-                    "notes": "",
-                })
+                _save_dictionary(
+                    {
+                        "item_key": item_key,
+                        "display_name": display_name,
+                        "item_type": "Cash",
+                        "subcategory": subcategory,
+                        "currency": currency,
+                        "active": True,
+                        "sort_order": sort_order,
+                        "notes": "",
+                    }
+                )
                 st.success("Cash option added.")
                 st.rerun()
 
     if cash_items.empty:
         st.info("No active cash options are available yet.")
     else:
-        labels = {
-            row["item_key"]: f"{row['display_name']} ({row['subcategory']})"
-            for _, row in cash_items.iterrows()
-        }
+        labels = {row["item_key"]: f"{row['display_name']} ({row['subcategory']})" for _, row in cash_items.iterrows()}
         with st.form("cash_value"):
             item_key = st.selectbox("Cash option", list(labels.keys()), format_func=lambda k: labels[k])
             as_of_date = st.date_input("Balance date", value=default_as_of_date)
@@ -241,15 +267,17 @@ elif upload_type == "Cash values":
             submitted = st.form_submit_button("Save cash value", use_container_width=True)
             if submitted:
                 selected = cash_items[cash_items["item_key"].astype(str) == str(item_key)].iloc[0]
-                _append_row(MANUAL_VALUES_PATH, {
-                    "as_of_date": as_of_date.isoformat(),
-                    "item_key": item_key,
-                    "value": value,
-                    "currency": selected.get("currency", "EUR"),
-                    "valuation_source": "Admin input",
-                    "valuation_method": "Monthly cash value",
-                    "notes": "",
-                })
+                _save_manual_value(
+                    {
+                        "as_of_date": as_of_date.isoformat(),
+                        "item_key": item_key,
+                        "value": value,
+                        "currency": selected.get("currency", "EUR"),
+                        "valuation_source": "Admin input",
+                        "valuation_method": "Monthly cash value",
+                        "notes": "",
+                    }
+                )
                 st.success("Cash value saved.")
 
 else:
@@ -259,24 +287,28 @@ else:
         capital_committed = st.number_input("Capital committed", min_value=0.0, step=1000.0)
         submitted = st.form_submit_button("Save controls", use_container_width=True)
         if submitted:
-            _append_row(CONTROLS_PATH, {
-                "portfolio_id": settings.portfolio_id,
-                "investor_name": settings.investor_name,
-                "as_of_date": as_of_date.isoformat(),
-                "capital_committed": capital_committed,
-                "currency": "EUR",
-                "notes": "Admin-entered official capital commitment",
-            })
+            _save_control(
+                {
+                    "portfolio_id": settings.portfolio_id,
+                    "investor_name": settings.investor_name,
+                    "as_of_date": as_of_date.isoformat(),
+                    "capital_committed": capital_committed,
+                    "currency": "EUR",
+                    "notes": "Admin-entered official capital commitment",
+                }
+            )
             st.success("Portfolio inputs saved.")
 
 st.divider()
 st.subheader("Current Admin Inputs")
 tab1, tab2, tab3 = st.tabs(["Dictionary", "Monthly Values", "Portfolio Inputs"])
 with tab1:
-    st.dataframe(_read_csv(DICTIONARY_PATH), use_container_width=True, hide_index=True)
+    df = pd.DataFrame(read_active_dictionary()) if db_enabled() else _read_csv(DICTIONARY_PATH)
+    st.dataframe(df, use_container_width=True, hide_index=True)
 with tab2:
-    st.dataframe(_read_csv(MANUAL_VALUES_PATH), use_container_width=True, hide_index=True)
+    df = pd.DataFrame(read_manual_values()) if db_enabled() else _read_csv(MANUAL_VALUES_PATH)
+    st.dataframe(df, use_container_width=True, hide_index=True)
 with tab3:
-    controls_df = _read_csv(CONTROLS_PATH)
+    controls_df = pd.DataFrame(read_controls()) if db_enabled() else _read_csv(CONTROLS_PATH)
     visible_cols = [c for c in ["as_of_date", "capital_committed", "currency"] if c in controls_df.columns]
     st.dataframe(controls_df[visible_cols], use_container_width=True, hide_index=True)

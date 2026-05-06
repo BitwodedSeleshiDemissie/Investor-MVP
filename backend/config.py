@@ -14,6 +14,7 @@ class Settings(BaseSettings):
 
     # Access control
     dashboard_password: str | None = None
+    database_url: str | None = None
 
     # Financial config
     risk_free_rate: float = 0.035        # annual, used for Sharpe
