@@ -288,11 +288,6 @@ if view == "Non-Listed":
             use_container_width=True,
             hide_index=True,
         )
-        st.warning(
-            "Non-listed values are latest approved admin valuations. "
-            "Volatility, Sharpe, beta, and drawdown are not shown for this section "
-            "unless valuation marks are frequent and defensible."
-        )
     st.stop()
 
 if view == "Cash":
