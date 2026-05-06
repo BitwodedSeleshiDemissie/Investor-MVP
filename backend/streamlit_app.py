@@ -51,6 +51,7 @@ ALLOC_COLOURS = {
 }
 
 
+
 def _is_authenticated() -> bool:
     return bool(st.session_state.get("authenticated", False))
 
@@ -87,7 +88,8 @@ def require_authentication() -> None:
 # ── Data loading (cached) ─────────────────────────────────────────────────────
 
 @st.cache_data(show_spinner="Loading workbook…")
-def load_data():
+def load_data(workbook_mtime_ns: int):
+    _ = workbook_mtime_ns
     data = load_workbook(settings.excel_path)
     kpis   = compute_kpis(data, settings)
     ts     = compute_timeseries(data)
@@ -99,11 +101,19 @@ def load_data():
     holds  = compute_holdings(data)
     warns  = check_nav_reconciliation(data, settings.nav_reconciliation_tolerance)
     pm     = data.portfolio_metrics
-    return kpis, ts, alloc, irr, risk, dist, tgt, holds, warns, pm
+    ds     = data.dashboard_summary
+    return kpis, ts, alloc, irr, risk, dist, tgt, holds, warns, pm, ds
+
+
+def _workbook_mtime_ns() -> int:
+    try:
+        return settings.excel_path.stat().st_mtime_ns
+    except FileNotFoundError:
+        return 0
 
 require_authentication()
 
-kpis, ts, alloc, irr, risk, dist, tgt, holds, warns, pm = load_data()
+kpis, ts, alloc, irr, risk, dist, tgt, holds, warns, pm, dashboard_summary = load_data(_workbook_mtime_ns())
 
 # ── Reload button ─────────────────────────────────────────────────────────────
 
@@ -140,6 +150,175 @@ def _eur(v: float) -> str:
 
 # ── KPI Cards ─────────────────────────────────────────────────────────────────
 
+def _summary_rows(section: str) -> pd.DataFrame:
+    if dashboard_summary.empty or "section" not in dashboard_summary.columns:
+        return pd.DataFrame()
+    return dashboard_summary[dashboard_summary["section"] == section].copy()
+
+def _metric_value(*labels: str, default: float = 0.0) -> float:
+    for label in labels:
+        value = pm.get(label)
+        if value is not None:
+            return float(value)
+    return default
+
+def _summary_total(section: str) -> float:
+    rows = _summary_rows(section)
+    if rows.empty or "value" not in rows.columns:
+        return 0.0
+    return float(pd.to_numeric(rows["value"], errors="coerce").fillna(0).sum())
+
+def _partition_values() -> dict[str, float]:
+    return {
+        "Listed": _summary_total("Listed"),
+        "Non-Listed": _summary_total("Non-Listed"),
+        "Cash": _summary_total("Cash"),
+    }
+
+def _partition_card(label: str, value: float, total: float, note: str, colour: str) -> None:
+    weight = value / total if total else 0.0
+    st.markdown(
+        f"""
+        <div style="border:1px solid #2D3147;border-radius:8px;padding:16px;background:{CARD};">
+          <div style="font-size:13px;color:#AEB6C2;margin-bottom:6px;">{label}</div>
+          <div style="font-size:28px;font-weight:700;color:#FAFAFA;">EUR {value:,.0f}</div>
+          <div style="font-size:13px;color:{colour};margin-top:4px;">{weight:.1%} of total</div>
+          <div style="font-size:12px;color:#AEB6C2;margin-top:8px;">{note}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+def _render_partition_block() -> None:
+    partition = _partition_values()
+    total = sum(partition.values())
+    if not total:
+        return
+
+    st.subheader("Portfolio Composition by Data Source")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        _partition_card(
+            "Listed / Market-Priced",
+            partition["Listed"],
+            total,
+            "Directa/Vasco listed instruments",
+            ORANGE,
+        )
+    with c2:
+        _partition_card(
+            "Non-Listed / Approved Values",
+            partition["Non-Listed"],
+            total,
+            "Admin-entered monthly values",
+            "#A78BFA",
+        )
+    with c3:
+        _partition_card(
+            "Cash",
+            partition["Cash"],
+            total,
+            "Directa cash plus external cash",
+            "#94A3B8",
+        )
+
+    partition_df = pd.DataFrame([
+        {
+            "Source": key,
+            "Value": value,
+            "Weight": value / total if total else 0.0,
+        }
+        for key, value in partition.items()
+    ])
+    fig_partition = px.bar(
+        partition_df,
+        x="Weight",
+        y=["Portfolio"] * len(partition_df),
+        color="Source",
+        orientation="h",
+        text=partition_df["Weight"].map(lambda x: f"{x:.1%}"),
+        color_discrete_map={
+            "Listed": ORANGE,
+            "Non-Listed": "#A78BFA",
+            "Cash": "#94A3B8",
+        },
+        hover_data={"Value": ":,.0f", "Weight": ":.1%", "Source": True},
+    )
+    fig_partition.update_layout(
+        paper_bgcolor=BG,
+        plot_bgcolor=BG,
+        font_color="#FAFAFA",
+        xaxis=dict(visible=False, range=[0, 1]),
+        yaxis=dict(visible=False),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        margin=dict(l=0, r=0, t=30, b=0),
+        height=145,
+        barmode="stack",
+    )
+    st.plotly_chart(fig_partition, use_container_width=True)
+
+    st.caption(
+        "Listed assets use market-priced Directa/Vasco data. "
+        "Non-listed assets use monthly admin-approved values. "
+        "Cash is separated so Directa cash and external cash are not hidden inside performance metrics."
+    )
+
+view = st.radio(
+    "Dashboard section",
+    ["Overview", "Listed", "Non-Listed", "Cash"],
+    horizontal=True,
+    label_visibility="collapsed",
+)
+
+if view == "Non-Listed":
+    st.subheader("Non-Listed Assets")
+    rows = _summary_rows("Non-Listed")
+    if rows.empty:
+        st.info("No non-listed monthly values have been entered yet.")
+    else:
+        st.metric("Total Non-Listed Value", _eur(_summary_total("Non-Listed")))
+        st.caption("Latest monthly values entered by admin. These are not treated as market-priced positions.")
+        display_cols = [
+            "display_name", "subcategory", "value", "currency",
+            "as_of_date", "source", "method", "notes",
+        ]
+        available = [c for c in display_cols if c in rows.columns]
+        st.dataframe(
+            rows[available].style.format({"value": "â‚¬{:,.0f}"}),
+            use_container_width=True,
+            hide_index=True,
+        )
+        st.warning(
+            "Non-listed values are latest approved admin valuations. "
+            "Volatility, Sharpe, beta, and drawdown are not shown for this section "
+            "unless valuation marks are frequent and defensible."
+        )
+    st.stop()
+
+if view == "Cash":
+    st.subheader("Cash")
+    rows = _summary_rows("Cash")
+    if rows.empty:
+        st.info("No cash breakdown is available yet.")
+    else:
+        st.metric("Total Cash", _eur(_summary_total("Cash")))
+        st.caption("Directa cash is reconstructed automatically; external and restricted cash come from admin monthly values.")
+        display_cols = [
+            "display_name", "subcategory", "value", "currency",
+            "as_of_date", "source", "method", "notes",
+        ]
+        available = [c for c in display_cols if c in rows.columns]
+        st.dataframe(
+            rows[available].style.format({"value": "â‚¬{:,.0f}"}),
+            use_container_width=True,
+            hide_index=True,
+        )
+    st.stop()
+
+if view == "Listed":
+    st.subheader("Listed / Market-Priced Assets")
+    st.caption("This section uses the existing Directa/Vasco preprocessing flow and keeps listed-market metrics such as TWR, volatility, Sharpe, and drawdown.")
+
 c1, c2, c3, c4, c5, c6 = st.columns(6)
 
 c1.metric("Portfolio Value",  _eur(kpis.total_portfolio_value),
@@ -160,6 +339,12 @@ c6.metric("Total Income",
           _eur(kpis.distributions_total),
           delta=f"{kpis.distributions_count} payments",
           delta_color="off")
+
+listed_total = _summary_total("Listed")
+nonlisted_total = _summary_total("Non-Listed")
+cash_total = _summary_total("Cash")
+if listed_total or nonlisted_total or cash_total:
+    _render_partition_block()
 
 st.divider()
 
@@ -258,9 +443,9 @@ with col_irr:
     st.metric("Valuation Date", str(irr.valuation_date))
     st.divider()
     st.subheader("P&L Breakdown")
-    st.metric("Unrealized P&L", _eur(float(pm.get("Total Unrealized P&L", 0))))
-    st.metric("Realized P&L",   _eur(float(pm.get("Total Realized P&L", 0))))
-    st.metric("Net Total P&L",  _eur(float(pm.get("Net Total P&L", 0))))
+    st.metric("Unrealized P&L", _eur(_metric_value("Unrealized P&L", "Total Unrealized P&L")))
+    st.metric("Realized P&L",   _eur(_metric_value("Realized P&L", "Total Realized P&L")))
+    st.metric("Net Total P&L",  _eur(_metric_value("Net Total P&L")))
 
 with col_target:
     st.subheader("Target vs Actual")

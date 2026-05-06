@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Formula Review</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: Arial, sans-serif;
+      color: #172033;
+      background: #f5f6f8;
+      line-height: 1.55;
+    }
+
+    .topbar {
+      background: #142033;
+      color: #fff;
+      padding: 34px 48px;
+    }
+
+    .topbar .label {
+      color: #9fb6d1;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 1.4px;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    .topbar h1 {
+      font-size: 30px;
+      line-height: 1.2;
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+
+    .topbar p {
+      max-width: 900px;
+      color: #d6e0eb;
+      font-size: 15px;
+    }
+
+    .page {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 34px 28px 70px;
+    }
+
+    .actions {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 20px;
+    }
+
+    button {
+      appearance: none;
+      border: 1px solid #1d3552;
+      background: #1d3552;
+      color: #fff;
+      border-radius: 6px;
+      padding: 10px 14px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #2b4a70;
+    }
+
+    section {
+      background: #fff;
+      border: 1px solid #dde3ea;
+      border-radius: 8px;
+      padding: 24px;
+      margin-bottom: 22px;
+    }
+
+    h2 {
+      font-size: 18px;
+      color: #142033;
+      margin-bottom: 10px;
+    }
+
+    h3 {
+      font-size: 14px;
+      color: #31516f;
+      margin: 18px 0 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.7px;
+    }
+
+    p {
+      margin-bottom: 12px;
+    }
+
+    ul {
+      padding-left: 22px;
+      margin-top: 8px;
+    }
+
+    li {
+      margin-bottom: 8px;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 18px;
+    }
+
+    .summary-box {
+      border: 1px solid #d7e0ea;
+      border-radius: 8px;
+      padding: 14px;
+      background: #fafbfd;
+    }
+
+    .summary-box strong {
+      display: block;
+      font-size: 13px;
+      color: #31516f;
+      margin-bottom: 5px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 14px;
+      font-size: 13px;
+    }
+
+    th,
+    td {
+      border: 1px solid #dce3eb;
+      padding: 10px;
+      vertical-align: top;
+      text-align: left;
+    }
+
+    th {
+      background: #edf2f7;
+      color: #142033;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    tbody tr:nth-child(even) {
+      background: #fafbfd;
+    }
+
+    .formula {
+      font-family: Consolas, "Courier New", monospace;
+      color: #0f3b57;
+      white-space: normal;
+    }
+
+    .status {
+      min-width: 112px;
+      color: #69798b;
+    }
+
+    .note {
+      background: #fff7e8;
+      border: 1px solid #f0d8a6;
+      border-radius: 8px;
+      padding: 14px 16px;
+      color: #5a4218;
+      margin-top: 14px;
+    }
+
+    .prompt-list {
+      columns: 2;
+      column-gap: 34px;
+    }
+
+    .notes-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+      margin-top: 18px;
+    }
+
+    .notes-line {
+      border-bottom: 1px solid #9aa8b6;
+      min-height: 44px;
+      padding-top: 20px;
+      color: #69798b;
+      font-size: 13px;
+    }
+
+    @media (max-width: 820px) {
+      .topbar {
+        padding: 26px 22px;
+      }
+
+      .page {
+        padding: 22px 14px 46px;
+      }
+
+      section {
+        padding: 18px;
+      }
+
+      .summary-grid,
+      .notes-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .prompt-list {
+        columns: 1;
+      }
+
+      table {
+        display: block;
+        overflow-x: auto;
+        white-space: nowrap;
+      }
+    }
+
+    @media print {
+      body {
+        background: #fff;
+      }
+
+      .topbar {
+        background: #fff;
+        color: #142033;
+        border-bottom: 2px solid #142033;
+      }
+
+      .topbar p,
+      .topbar .label {
+        color: #142033;
+      }
+
+      .actions {
+        display: none;
+      }
+
+      .page {
+        max-width: none;
+        padding: 20px;
+      }
+
+      section {
+        break-inside: avoid;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="label">Screen Share Review</div>
+    <h1>Formula Review</h1>
+    <p>
+      A simple page to walk through with finance and confirm that the dashboard calculations match the Excel workbook logic.
+      The main question for each row is: does this look accurate?
+    </p>
+  </header>
+
+  <main class="page">
+    <section>
+      <h2>How to Use This</h2>
+      <p>
+        Share this screen and go row by row. The question is simple:
+        <strong>is this the correct way to calculate and display this metric from the Excel file?</strong>
+      </p>
+      <ul>
+        <li>Is the formula accurate?</li>
+        <li>Are we pulling from the right Excel field?</li>
+        <li>Should the dashboard calculate it, or read it directly from Excel?</li>
+        <li>Anything here that should be renamed or handled differently?</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Formulas to Confirm</h2>
+      <table>
+        <thead>
+          <tr>
+            <th style="width: 22%;">Metric</th>
+            <th style="width: 34%;">Formula / Source</th>
+            <th>Ask Him</th>
+            <th style="width: 18%;">Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Total Portfolio Value</strong></td>
+            <td class="formula">Portfolio Metrics tab: Total Portfolio Value</td>
+            <td>Is this the right source for NAV / portfolio value?</td>
+            <td></td>
+          </tr>
+          <tr>
+            <td><strong>Capital Committed</strong></td>
+            <td class="formula">Portfolio Metrics tab: Total Invested Capital</td>
+            <td>Is this the right definition of committed capital?</td>
+            <td></td>
+          </tr>
+          <tr>
+            <td><strong>Return Since Entry</strong></td>
+            <td class="formula">Portfolio Metrics tab: (Total Portfolio Value - Total Invested Capital) / Total Invested Capital</td>
+            <td>Is this the return calculation you expect?</td>
+            <td></td>
+          </tr>
+          <tr>
+            <td><strong>MOIC</strong></td>
+            <td class="formula">Portfolio Metrics tab: (Total Portfolio Value + Total Income) / Total Invested Capital</td>
+            <td>Should income be included in MOIC like this?</td>
+            <td></td>
+          </tr>
+          <tr>
+            <td><strong>Current Yield</strong></td>
+            <td class="formula">Portfolio Metrics tab: Total Income / Total Portfolio Value</td>
+            <td>Should this use total income or trailing 12-month income?</td>
+            <td></td>
+          </tr>
+          <tr>
+            <td><strong>Distributions</strong></td>
+            <td class="formula">Trade Log tab: sum Net Amount for Dividend, Coupon, Distribution, Sec. Lending</td>
+            <td>Are these the right income types, and should this be net of tax?</td>
+            <td></td>
+          </tr>
+          <tr>
+            <td><strong>Asset Allocation</strong></td>
+            <td class="formula">Holdings tab + Portfolio Metrics tab: Asset Class Market Value / Total Allocation Value</td>
+            <td>Should cash be included in the allocation total?</td>
+            <td></td>
+          </tr>
+          <tr>
+            <td><strong>Investor IRR</strong></td>
+            <td class="formula">IRR Analysis tab + Portfolio Metrics tab: XIRR(investor cash flows + terminal portfolio value)</td>
+            <td>Are the cash flow signs correct: deposits negative, withdrawals positive?</td>
+            <td></td>
+          </tr>
+          <tr>
+            <td><strong>Company / Fund IRR</strong></td>
+            <td class="formula">IRR Analysis tab + Portfolio Metrics tab: XIRR(portfolio cash flows + terminal holdings market value)</td>
+            <td>Should the terminal value exclude cash here?</td>
+            <td></td>
+          </tr>
+          <tr>
+            <td><strong>Annualized Return</strong></td>
+            <td class="formula">Portfolio Metrics tab: Annualized Return (TWR)</td>
+            <td>Should Excel remain the source of truth for this?</td>
+            <td></td>
+          </tr>
+          <tr>
+            <td><strong>Volatility</strong></td>
+            <td class="formula">Monthly Returns tab: StdDev(monthly returns) * sqrt(12)</td>
+            <td>Is this the correct volatility method?</td>
+            <td></td>
+          </tr>
+          <tr>
+            <td><strong>Sharpe Ratio</strong></td>
+            <td class="formula">Portfolio Metrics tab + Monthly Returns tab: (Annualized Return - Risk-Free Rate) / Volatility</td>
+            <td>Where should the risk-free rate come from?</td>
+            <td></td>
+          </tr>
+          <tr>
+            <td><strong>Max Drawdown</strong></td>
+            <td class="formula">Monthly Returns tab: lowest drop from peak using monthly return index</td>
+            <td>Should drawdown be based on monthly returns instead of raw NAV?</td>
+            <td></td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="note">
+        Final question: if the Excel format changes later, who should tell us so the dashboard formulas stay correct?
+      </div>
+    </section>
+  </main>
+</body>
+</html>

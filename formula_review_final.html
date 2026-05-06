@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Formula Review Final</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: Arial, sans-serif;
+      color: #172033;
+      background: #f5f6f8;
+      line-height: 1.55;
+    }
+
+    .topbar {
+      background: #142033;
+      color: #fff;
+      padding: 34px 48px;
+    }
+
+    .label {
+      color: #9fb6d1;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 1.4px;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    h1 {
+      font-size: 30px;
+      line-height: 1.2;
+      margin-bottom: 10px;
+    }
+
+    .topbar p {
+      max-width: 900px;
+      color: #d6e0eb;
+      font-size: 15px;
+    }
+
+    .page {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 34px 28px 70px;
+    }
+
+    section {
+      background: #fff;
+      border: 1px solid #dde3ea;
+      border-radius: 8px;
+      padding: 24px;
+      margin-bottom: 22px;
+    }
+
+    h2 {
+      font-size: 18px;
+      color: #142033;
+      margin-bottom: 10px;
+    }
+
+    p {
+      margin-bottom: 12px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 14px;
+      font-size: 13px;
+    }
+
+    th,
+    td {
+      border: 1px solid #dce3eb;
+      padding: 10px;
+      vertical-align: top;
+      text-align: left;
+    }
+
+    th {
+      background: #edf2f7;
+      color: #142033;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    tbody tr:nth-child(even) {
+      background: #fafbfd;
+    }
+
+    .formula {
+      font-family: Consolas, "Courier New", monospace;
+      color: #0f3b57;
+    }
+
+    .note {
+      background: #fff7e8;
+      border: 1px solid #f0d8a6;
+      border-radius: 8px;
+      padding: 14px 16px;
+      color: #5a4218;
+      margin-top: 14px;
+    }
+
+    @media (max-width: 820px) {
+      .topbar {
+        padding: 26px 22px;
+      }
+
+      .page {
+        padding: 22px 14px 46px;
+      }
+
+      section {
+        padding: 18px;
+      }
+
+      table {
+        display: block;
+        overflow-x: auto;
+        white-space: nowrap;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="label">Final Reference</div>
+    <h1>Formula Review Final</h1>
+    <p>
+      Final formula reference for the dashboard calculations, showing the Excel tab source and the calculation logic used for each metric.
+    </p>
+  </header>
+
+  <main class="page">
+    <section>
+      <h2>Formula Reference</h2>
+      <table>
+        <thead>
+          <tr>
+            <th style="width: 25%;">Metric</th>
+            <th style="width: 45%;">Formula / Excel Source</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Total Portfolio Value</strong></td>
+            <td class="formula">Portfolio Metrics tab: Total Portfolio Value</td>
+            <td>Used as the main NAV / portfolio value displayed on the dashboard.</td>
+          </tr>
+          <tr>
+            <td><strong>Capital Committed</strong></td>
+            <td class="formula">Portfolio Metrics tab: Total Invested Capital</td>
+            <td>Used as the total capital contributed / invested capital figure.</td>
+          </tr>
+          <tr>
+            <td><strong>Return Since Entry</strong></td>
+            <td class="formula">Portfolio Metrics tab: (Total Portfolio Value - Total Invested Capital) / Total Invested Capital</td>
+            <td>Simple return metric, separate from IRR and TWR.</td>
+          </tr>
+          <tr>
+            <td><strong>MOIC</strong></td>
+            <td class="formula">Portfolio Metrics tab: (Total Portfolio Value + Total Income) / Total Invested Capital</td>
+            <td>Shows multiple on invested capital including income received.</td>
+          </tr>
+          <tr>
+            <td><strong>Current Yield</strong></td>
+            <td class="formula">Portfolio Metrics tab: Total Income / Total Portfolio Value</td>
+            <td>Uses income received relative to current portfolio value.</td>
+          </tr>
+          <tr>
+            <td><strong>Distributions</strong></td>
+            <td class="formula">Trade Log tab: sum Net Amount for Dividend, Coupon, Distribution, Sec. Lending</td>
+            <td>Income rows are summed using net amount.</td>
+          </tr>
+          <tr>
+            <td><strong>Asset Allocation</strong></td>
+            <td class="formula">Holdings tab + Portfolio Metrics tab: Asset Class Market Value / Total Allocation Value</td>
+            <td>Uses holdings market value by asset class, with cash from Portfolio Metrics.</td>
+          </tr>
+          <tr>
+            <td><strong>Investor IRR</strong></td>
+            <td class="formula">IRR Analysis tab + Portfolio Metrics tab: XIRR(investor cash flows + terminal portfolio value)</td>
+            <td>Deposits are treated as negative cash flows; withdrawals and terminal value are positive.</td>
+          </tr>
+          <tr>
+            <td><strong>Company / Fund IRR</strong></td>
+            <td class="formula">IRR Analysis tab + Portfolio Metrics tab: XIRR(portfolio cash flows + terminal holdings market value)</td>
+            <td>Uses portfolio-level cash flows and terminal holdings market value.</td>
+          </tr>
+          <tr>
+            <td><strong>Annualized Return</strong></td>
+            <td class="formula">Portfolio Metrics tab: Annualized Return (TWR)</td>
+            <td>Read directly from the workbook.</td>
+          </tr>
+          <tr>
+            <td><strong>Volatility</strong></td>
+            <td class="formula">Monthly Returns tab: StdDev(monthly returns) * sqrt(12)</td>
+            <td>Annualized from monthly return volatility.</td>
+          </tr>
+          <tr>
+            <td><strong>Sharpe Ratio</strong></td>
+            <td class="formula">Portfolio Metrics tab + Monthly Returns tab: (Annualized Return - Risk-Free Rate) / Volatility</td>
+            <td>Uses annualized return, risk-free rate, and annualized volatility.</td>
+          </tr>
+          <tr>
+            <td><strong>Max Drawdown</strong></td>
+            <td class="formula">Monthly Returns tab: lowest drop from peak using monthly return index</td>
+            <td>Based on the compounded monthly return series.</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="note">
+        If Excel sheet names, column names, labels, or cell positions change in future versions, the dashboard mapping should be reviewed.
+      </div>
+    </section>
+  </main>
+</body>
+</html>

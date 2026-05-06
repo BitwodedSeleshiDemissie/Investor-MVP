@@ -56,17 +56,27 @@ def compute_kpis(data: WorkbookData, settings: Settings) -> KPIs:
     # Total Portfolio Value = Holdings market value + cash (pre-computed)
     total_portfolio_value: float = float(pm.get("Total Portfolio Value", 0))
 
-    # Capital committed = total deposits ever made
-    capital_committed: float = float(pm.get("Total Invested Capital", 0))
+    # Capital committed is now an admin-controlled input when present.
+    capital_committed: float = float(
+        pm.get("Capital Committed", pm.get("Total Invested Capital", 0))
+    )
 
     # % since entry = (NAV - committed) / committed
-    pct_since_entry: float = (total_portfolio_value - capital_committed) / capital_committed
+    pct_since_entry: float = (
+        (total_portfolio_value - capital_committed) / capital_committed
+        if capital_committed
+        else 0.0
+    )
 
     # MOIC = (NAV + total income received) / capital_committed
     # Formula: total return to investor if they liquidated today (NAV) plus
     # cash already received (income), divided by total cash ever put in.
     total_income: float = float(pm.get("Total Income (Div+Cpn+Dist)", 0))
-    moic: float = (total_portfolio_value + total_income) / capital_committed
+    moic: float = (
+        (total_portfolio_value + total_income) / capital_committed
+        if capital_committed
+        else 0.0
+    )
 
     # Current yield = TTM income / NAV
     # We use total income as a proxy for TTM (portfolio is ~15 months old)
@@ -146,7 +156,7 @@ def compute_allocation(data: WorkbookData) -> Allocation:
         .rename(index=_CLASS_LABEL)
         .to_dict()
     )
-    cash = float(pm.get("Cash Balance (est.)", 0))
+    cash = float(pm.get("Total Cash", pm.get("Cash Balance (est.)", 0)))
     if cash > 0:
         groups["Cash"] = cash
 
@@ -210,7 +220,7 @@ def _build_portfolio_cashflows(data: WorkbookData) -> tuple[list[date], list[flo
     dates = [_to_date(d) for d in port["Date"]]
     flows = [float(cf) for cf in port["Cash Flow"]]
 
-    mktval = float(data.portfolio_metrics.get("Total Market Value (Holdings)", 0))
+    mktval = float(data.portfolio_metrics.get("Listed Market Value", data.portfolio_metrics.get("Total Market Value (Holdings)", 0)))
     dates.append(_to_date(data.cutoff_date))
     flows.append(mktval)
     return dates, flows
@@ -336,7 +346,7 @@ def compute_targets(data: WorkbookData, settings: Settings) -> TargetVsActual:
     bond_mv = float(h[h["Asset Class"] == "Bond"]["Market Value"].sum())
     etf_mv = float(h[h["Asset Class"] == "ETF/ETC"]["Market Value"].sum())
     crypto_mv = float(h[h["Asset Class"] == "Crypto ETP"]["Market Value"].sum())
-    cash_mv = float(pm.get("Cash Balance (est.)", 0))
+    cash_mv = float(pm.get("Total Cash", pm.get("Cash Balance (est.)", 0)))
 
     equity_pct = stock_mv / total_nav
     bond_pct = bond_mv / total_nav

@@ -32,6 +32,8 @@ class WorkbookData:
     irr_portfolio: pd.DataFrame      # Date, Cash Flow columns
     monthly_returns: pd.DataFrame
     cutoff_date: datetime
+    dashboard_summary: pd.DataFrame = field(default_factory=pd.DataFrame)
+    manual_values: pd.DataFrame = field(default_factory=pd.DataFrame)
     loaded_at: datetime = field(default_factory=datetime.utcnow)
 
 
@@ -128,6 +130,14 @@ def _parse_monthly_returns(xl: pd.ExcelFile) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
+def _parse_optional_sheet(xl: pd.ExcelFile, name: str, header: int = 2) -> pd.DataFrame:
+    if name not in xl.sheet_names:
+        return pd.DataFrame()
+    df = xl.parse(name, header=header)
+    df = df.dropna(how="all")
+    return df.reset_index(drop=True)
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def load_workbook(path: Path) -> WorkbookData:
@@ -140,6 +150,8 @@ def load_workbook(path: Path) -> WorkbookData:
     portfolio_metrics = _parse_portfolio_metrics(xl)
     irr_investor, irr_portfolio = _parse_irr_sheet(xl)
     monthly_returns = _parse_monthly_returns(xl)
+    dashboard_summary = _parse_optional_sheet(xl, "Dashboard Summary")
+    manual_values = _parse_optional_sheet(xl, "Manual Values")
 
     data = WorkbookData(
         trade_log=trade_log,
@@ -148,6 +160,8 @@ def load_workbook(path: Path) -> WorkbookData:
         irr_investor=irr_investor,
         irr_portfolio=irr_portfolio,
         monthly_returns=monthly_returns,
+        dashboard_summary=dashboard_summary,
+        manual_values=manual_values,
         cutoff_date=cutoff_date,
     )
     logger.info("Workbook loaded. %d trade rows, %d holdings, %d monthly rows.",
