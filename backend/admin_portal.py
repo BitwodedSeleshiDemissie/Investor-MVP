@@ -158,14 +158,14 @@ elif upload_type == "Non-listed values":
     dictionary = _active_dictionary()
     non_listed = dictionary[dictionary.get("item_type", "").astype(str) == "Non-Listed"] if not dictionary.empty else pd.DataFrame()
 
-    with st.expander("Add non-listed asset"):
+    with st.expander("Add non-listed company"):
         with st.form("add_nonlisted_dictionary"):
-            item_key = st.text_input("Asset key", placeholder="PRIVATE_EQUITY_002")
-            display_name = st.text_input("Display name", placeholder="Private Equity Holding B")
-            subcategory = st.text_input("Subcategory", placeholder="Private Equity")
+            item_key = st.text_input("Company key", placeholder="BENDING_SPOONS")
+            display_name = st.text_input("Company name", placeholder="Bending Spoons")
+            subcategory = st.text_input("Category", placeholder="Private Equity")
             currency = st.text_input("Currency", value="EUR")
             sort_order = st.number_input("Sort order", min_value=0, step=1, value=10)
-            submitted = st.form_submit_button("Add non-listed asset", use_container_width=True)
+            submitted = st.form_submit_button("Add non-listed company", use_container_width=True)
             if submitted and item_key:
                 _save_dictionary(
                     {
@@ -187,12 +187,26 @@ elif upload_type == "Non-listed values":
     else:
         labels = {row["item_key"]: f"{row['display_name']} ({row['subcategory']})" for _, row in non_listed.iterrows()}
         with st.form("nonlisted_value"):
-            item_key = st.selectbox("Non-listed asset", list(labels.keys()), format_func=lambda k: labels[k])
+            item_key = st.selectbox("Non-listed company", list(labels.keys()), format_func=lambda k: labels[k])
+            holding_name = st.text_input("Holding name (optional)", placeholder="Bending Spoons")
             as_of_date = st.date_input("Valuation date", value=default_as_of_date)
-            value = st.number_input("Latest approved value", min_value=0.0, step=1000.0)
+            value = st.number_input("Latest approved valuation", min_value=0.0, step=1000.0)
             submitted = st.form_submit_button("Save non-listed value", use_container_width=True)
             if submitted:
                 selected = non_listed[non_listed["item_key"].astype(str) == str(item_key)].iloc[0]
+                if holding_name.strip():
+                    _save_dictionary(
+                        {
+                            "item_key": item_key,
+                            "display_name": holding_name.strip(),
+                            "item_type": "Non-Listed",
+                            "subcategory": str(selected.get("subcategory", "Non-Listed")),
+                            "currency": str(selected.get("currency", "EUR")),
+                            "active": True,
+                            "sort_order": int(selected.get("sort_order", 0) or 0),
+                            "notes": str(selected.get("notes", "")),
+                        }
+                    )
                 _save_manual_value(
                     {
                         "as_of_date": as_of_date.isoformat(),
