@@ -237,3 +237,41 @@ def read_snapshot(cutoff: date) -> CloudAdminSnapshot:
                 non_listed_total=totals.get("Non-Listed", 0.0),
                 cash_total=totals.get("Cash", 0.0),
             )
+
+
+def read_latest_manual_rows(cutoff: date, item_type: str) -> list[dict]:
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                WITH picked AS (
+                    SELECT DISTINCT ON (mv.item_key)
+                        mv.item_key,
+                        mv.as_of_date,
+                        mv.value,
+                        mv.currency,
+                        mv.valuation_source,
+                        mv.valuation_method,
+                        mv.notes
+                    FROM admin_manual_values mv
+                    WHERE mv.as_of_date <= %s
+                    ORDER BY mv.item_key, mv.as_of_date DESC, mv.created_at DESC
+                )
+                SELECT
+                    d.display_name,
+                    d.subcategory,
+                    p.value,
+                    COALESCE(NULLIF(p.currency, ''), d.currency, 'EUR') AS currency,
+                    p.as_of_date,
+                    p.valuation_source AS source,
+                    p.valuation_method AS method,
+                    p.notes
+                FROM picked p
+                JOIN asset_dictionary d ON d.item_key = p.item_key
+                WHERE d.active = TRUE
+                  AND d.item_type = %s
+                ORDER BY d.sort_order, d.item_key;
+                """,
+                (cutoff, item_type),
+            )
+            return list(cur.fetchall())

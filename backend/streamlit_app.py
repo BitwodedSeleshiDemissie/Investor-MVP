@@ -21,7 +21,7 @@ from calculations import (
     compute_targets,
     compute_timeseries,
 )
-from cloud_db import db_enabled, init_schema, read_snapshot
+from cloud_db import db_enabled, init_schema, read_latest_manual_rows, read_snapshot
 from config import settings
 from excel_loader import load_workbook
 
@@ -183,6 +183,16 @@ def _summary_total(section: str) -> float:
         return 0.0
     return float(pd.to_numeric(rows["value"], errors="coerce").fillna(0).sum())
 
+
+def _cloud_detail_rows(item_type: str) -> pd.DataFrame:
+    if cloud_snapshot is None:
+        return pd.DataFrame()
+    try:
+        rows = read_latest_manual_rows(holds.cutoff_date, item_type)
+        return pd.DataFrame(rows)
+    except Exception:
+        return pd.DataFrame()
+
 def _partition_values() -> dict[str, float]:
     return {
         "Listed": _summary_total("Listed"),
@@ -287,7 +297,7 @@ view = st.radio(
 
 if view == "Non-Listed":
     st.subheader("Non-Listed Assets")
-    rows = _summary_rows("Non-Listed")
+    rows = _cloud_detail_rows("Non-Listed") if cloud_snapshot is not None else _summary_rows("Non-Listed")
     if rows.empty:
         st.info("No non-listed monthly values have been entered yet.")
     else:
@@ -298,8 +308,10 @@ if view == "Non-Listed":
             "as_of_date", "source", "method", "notes",
         ]
         available = [c for c in display_cols if c in rows.columns]
+        if "as_of_date" in available:
+            rows["as_of_date"] = pd.to_datetime(rows["as_of_date"], errors="coerce").dt.date
         st.dataframe(
-            rows[available].style.format({"value": "â‚¬{:,.0f}"}),
+            rows[available].style.format({"value": "€{:,.0f}"}),
             use_container_width=True,
             hide_index=True,
         )
@@ -307,7 +319,16 @@ if view == "Non-Listed":
 
 if view == "Cash":
     st.subheader("Cash")
-    rows = _summary_rows("Cash")
+    rows = _cloud_detail_rows("Cash") if cloud_snapshot is not None else _summary_rows("Cash")
+    if cloud_snapshot is not None:
+        listed_cash_rows = _summary_rows("Cash")
+        if not listed_cash_rows.empty:
+            directa = listed_cash_rows[listed_cash_rows.get("source", pd.Series(dtype=str)).astype(str).str.contains("Directa", case=False, na=False)]
+            if not directa.empty:
+                direct_row = directa.iloc[0].to_dict()
+                direct_row["source"] = direct_row.get("source") or "Directa/Vasco"
+                direct_row["method"] = direct_row.get("method") or "Reconstructed cash balance"
+                rows = pd.concat([pd.DataFrame([direct_row]), rows], ignore_index=True, sort=False)
     if rows.empty:
         st.info("No cash breakdown is available yet.")
     else:
@@ -318,8 +339,10 @@ if view == "Cash":
             "as_of_date", "source", "method", "notes",
         ]
         available = [c for c in display_cols if c in rows.columns]
+        if "as_of_date" in available:
+            rows["as_of_date"] = pd.to_datetime(rows["as_of_date"], errors="coerce").dt.date
         st.dataframe(
-            rows[available].style.format({"value": "â‚¬{:,.0f}"}),
+            rows[available].style.format({"value": "€{:,.0f}"}),
             use_container_width=True,
             hide_index=True,
         )
