@@ -174,10 +174,13 @@ def _metric_value(*labels: str, default: float = 0.0) -> float:
 
 def _summary_total(section: str) -> float:
     if cloud_snapshot is not None:
+        if section == "Listed":
+            return float(_metric_value("Listed Market Value", default=0.0))
         if section == "Non-Listed":
             return float(cloud_snapshot.non_listed_total)
         if section == "Cash":
-            return float(cloud_snapshot.cash_total)
+            directa_cash = float(_metric_value("Directa Cash", default=0.0))
+            return float(directa_cash + cloud_snapshot.cash_total)
     rows = _summary_rows(section)
     if rows.empty or "value" not in rows.columns:
         return 0.0
@@ -192,6 +195,10 @@ def _cloud_detail_rows(item_type: str) -> pd.DataFrame:
         return pd.DataFrame(rows)
     except Exception:
         return pd.DataFrame()
+
+
+def _directa_cash_value() -> float:
+    return float(_metric_value("Directa Cash", default=0.0))
 
 def _partition_values() -> dict[str, float]:
     return {
@@ -326,6 +333,7 @@ if view == "Cash":
             directa = listed_cash_rows[listed_cash_rows.get("source", pd.Series(dtype=str)).astype(str).str.contains("Directa", case=False, na=False)]
             if not directa.empty:
                 direct_row = directa.iloc[0].to_dict()
+                direct_row["value"] = _directa_cash_value()
                 direct_row["source"] = direct_row.get("source") or "Directa/Vasco"
                 direct_row["method"] = direct_row.get("method") or "Reconstructed cash balance"
                 rows = pd.concat([pd.DataFrame([direct_row]), rows], ignore_index=True, sort=False)
