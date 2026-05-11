@@ -43,6 +43,16 @@ export async function initSchema(): Promise<void> {
   `);
 
   await query(`
+    CREATE TABLE IF NOT EXISTS portfolio_snapshots (
+      id BIGSERIAL PRIMARY KEY,
+      as_of_date DATE NOT NULL,
+      source_file TEXT NOT NULL DEFAULT '',
+      payload JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await query(`
     CREATE TABLE IF NOT EXISTS admin_anagrafe_baselines (
       id BIGSERIAL PRIMARY KEY,
       file_name TEXT NOT NULL,
@@ -67,6 +77,11 @@ export async function initSchema(): Promise<void> {
   await query(`
     CREATE INDEX IF NOT EXISTS idx_admin_manual_values_key_asof
     ON admin_manual_values (item_key, as_of_date, created_at)
+  `);
+
+  await query(`
+    CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_asof
+    ON portfolio_snapshots (as_of_date DESC, created_at DESC)
   `);
 
   await query(`

@@ -6,7 +6,8 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "import:snapshot": "tsx scripts/import-portfolio-snapshot.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",
@@ -56,6 +57,7 @@
     "eslint": "^9",
     "eslint-config-next": "^15",
     "tailwindcss": "^3.4.17",
+    "tsx": "^4.20.6",
     "typescript": "^5"
   }
 }
