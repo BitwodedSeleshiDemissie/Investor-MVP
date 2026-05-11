@@ -43,6 +43,23 @@ export async function initSchema(): Promise<void> {
   `);
 
   await query(`
+    CREATE TABLE IF NOT EXISTS admin_anagrafe_baselines (
+      id BIGSERIAL PRIMARY KEY,
+      file_name TEXT NOT NULL,
+      content BYTEA NOT NULL,
+      uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS admin_anagrafe_json_store (
+      store_key TEXT PRIMARY KEY,
+      payload JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await query(`
     CREATE INDEX IF NOT EXISTS idx_admin_controls_asof
     ON admin_controls (as_of_date, created_at)
   `);
@@ -50,5 +67,17 @@ export async function initSchema(): Promise<void> {
   await query(`
     CREATE INDEX IF NOT EXISTS idx_admin_manual_values_key_asof
     ON admin_manual_values (item_key, as_of_date, created_at)
+  `);
+
+  await query(`
+    CREATE INDEX IF NOT EXISTS idx_admin_anagrafe_uploaded
+    ON admin_anagrafe_baselines (uploaded_at DESC, id DESC)
+  `);
+
+  await query(`
+    UPDATE asset_dictionary
+    SET display_name = 'Short Term Receivable EUR',
+        subcategory = 'Short Term Receivable'
+    WHERE item_key = 'RESTRICTED_CASH_EUR'
   `);
 }

@@ -1,21 +1,19 @@
-import { loadWorkbook } from "@/lib/excel-loader";
-import {
-  computeKPIs,
-  computeTimeseries,
-  computeAllocation,
-  computeIRR,
-  computeRisk,
-  computeDistributions,
-  computeTargets,
-  computeHoldings,
-  computeComposition,
-  checkWarnings,
-} from "@/lib/calculations";
-import { env } from "@/lib/env";
-import { logger } from "@/lib/logger";
 import { dbEnabled, query } from "@/db/client";
 import { initSchema } from "@/db/schema";
-import type { PortfolioSnapshot } from "@/types/portfolio";
+import { env } from "@/lib/env";
+import type {
+  AllocationSlice,
+  DistributionEvent,
+  Holding,
+  IRRData,
+  KPIs,
+  NavPoint,
+  PnLBreakdown,
+  PortfolioComposition,
+  PortfolioSnapshot,
+  RiskMetrics,
+  TargetVsActual,
+} from "@/types/portfolio";
 
 const settings = {
   riskFreeRate: env.RISK_FREE_RATE,
@@ -25,107 +23,213 @@ const settings = {
   targetAltPct: env.TARGET_ALT_PCT,
 };
 
-export async function getPortfolioSnapshot(): Promise<PortfolioSnapshot> {
-  const data = loadWorkbook(env.EXCEL_PATH);
-  logger.info({ cutoff: data.cutoffDate }, "Workbook loaded");
+type ControlRow = {
+  portfolio_id: string;
+  investor_name: string;
+  as_of_date: string;
+  capital_committed: string;
+};
 
-  const [kpis, timeseries, allocation, irr, risk, distributions, targets, holdings, composition, warnings] =
-    await Promise.all([
-      Promise.resolve(computeKPIs(data, settings)),
-      Promise.resolve(computeTimeseries(data)),
-      Promise.resolve(computeAllocation(data)),
-      Promise.resolve(computeIRR(data)),
-      Promise.resolve(computeRisk(data, settings)),
-      Promise.resolve(computeDistributions(data)),
-      Promise.resolve(computeTargets(data, settings)),
-      Promise.resolve(computeHoldings(data)),
-      Promise.resolve(computeComposition(data)),
-      Promise.resolve(checkWarnings(data)),
-    ]);
+type ManualSummaryRow = {
+  item_key: string;
+  display_name: string;
+  item_type: string;
+  subcategory: string | null;
+  currency: string;
+  as_of_date: string;
+  value: string;
+};
 
-  // Overlay cloud admin values if DB is connected
-  if (dbEnabled()) {
-    try {
-      await initSchema();
-      const cutoffStr = data.cutoffDate.toISOString().split("T")[0];
-      const controls = await query<{ capital_committed: string }>(
-        "SELECT capital_committed FROM admin_controls WHERE as_of_date <= $1 ORDER BY as_of_date DESC LIMIT 1",
-        [cutoffStr]
-      );
-      if (controls.length > 0) {
-        const cc = Number(controls[0].capital_committed);
-        kpis.capitalCommitted = cc;
-        kpis.pctSinceEntry = cc > 0 ? (kpis.totalPortfolioValue - cc) / cc : 0;
-        kpis.moic = cc > 0 ? (kpis.totalPortfolioValue + kpis.totalIncome) / cc : 0;
-      }
+function toDateOnly(value: string | Date): string {
+  if (value instanceof Date) return value.toISOString().split("T")[0];
+  return value.includes("T") ? value.split("T")[0] : value;
+}
 
-      const nlRows = await query<{ display_name: string; value: string }>(
-        `SELECT DISTINCT ON (mv.item_key) mv.item_key, d.display_name, mv.value
-         FROM admin_manual_values mv
-         JOIN asset_dictionary d ON d.item_key = mv.item_key
-         WHERE mv.as_of_date <= $1
-           AND d.active = TRUE
-           AND LOWER(d.item_type) <> 'cash'
-           AND mv.item_key NOT ILIKE 'cash%'
-         ORDER BY mv.item_key, mv.as_of_date DESC, mv.created_at DESC`,
-        [cutoffStr]
-      );
-      const nlTotal = nlRows.reduce((s, r) => s + Number(r.value), 0);
-      if (nlTotal > 0) {
-        composition.nonListed = nlTotal;
-        composition.total = composition.listed + nlTotal + composition.cash;
-      }
+function normalizeType(itemType: string): "cash" | "non_listed" {
+  return itemType.toLowerCase() === "cash" ? "cash" : "non_listed";
+}
 
-      const cashRows = await query<{ value: string }>(
-        `SELECT DISTINCT ON (mv.item_key) mv.item_key, mv.value
-         FROM admin_manual_values mv
-         JOIN asset_dictionary d ON d.item_key = mv.item_key
-         WHERE mv.as_of_date <= $1
-           AND d.active = TRUE
-           AND (LOWER(d.item_type) = 'cash' OR mv.item_key ILIKE 'cash%')
-         ORDER BY mv.item_key, mv.as_of_date DESC, mv.created_at DESC`,
-        [cutoffStr]
-      );
-      const cashTotal = cashRows.reduce((s, r) => s + Number(r.value), 0);
-      if (cashTotal > 0) {
-        composition.cash = cashTotal;
-        composition.total = composition.listed + composition.nonListed + cashTotal;
-      }
-    } catch (err) {
-      logger.warn({ err }, "Failed to overlay cloud admin values");
-    }
-  }
+function allocationFromComposition(composition: PortfolioComposition): AllocationSlice[] {
+  const rows = [
+    { assetClass: "Listed / Market-Priced", marketValue: composition.listed },
+    { assetClass: "Non-Listed", marketValue: composition.nonListed },
+    { assetClass: "Cash", marketValue: composition.cash },
+  ].filter((row) => row.marketValue > 0);
 
-  function pm(d: typeof data, ...keys: string[]): number {
-    for (const k of keys) {
-      const v = d.portfolioMetrics[k];
-      if (v !== undefined && v !== null) return Number(v);
-    }
-    return 0;
-  }
+  return rows.map((row) => ({
+    ...row,
+    weight: composition.total > 0 ? row.marketValue / composition.total : 0,
+  }));
+}
 
-  const pnl = {
-    unrealized: pm(data, "Unrealized P&L", "Total Unrealized P&L"),
-    realized:   pm(data, "Realized P&L",   "Total Realized P&L"),
-    netTotal:   pm(data, "Net Total P&L",  "Net P&L"),
+function targetsFromComposition(composition: PortfolioComposition): TargetVsActual {
+  const total = composition.total;
+  return {
+    targetEquityPct: settings.targetEquityPct,
+    targetBondPct: settings.targetBondPct,
+    targetAltPct: settings.targetAltPct,
+    currentEquityPct: total > 0 ? composition.listed / total : 0,
+    currentBondPct: 0,
+    currentAltPct: total > 0 ? composition.nonListed / total : 0,
+    currentCashPct: total > 0 ? composition.cash / total : 0,
   };
-  const directaCash = pm(data, "Directa Cash", "Cash (Directa)", "Liquidity (Directa)");
+}
+
+function emptyRisk(): RiskMetrics {
+  return {
+    sharpeRatio: 0,
+    volatilityAnnualized: 0,
+    maxDrawdown: 0,
+    annualizedReturn: 0,
+    riskFreeRate: settings.riskFreeRate,
+    dataWindowMonths: 0,
+  };
+}
+
+function emptyPnL(): PnLBreakdown {
+  return { unrealized: 0, realized: 0, netTotal: 0 };
+}
+
+function emptyIrr(cutoffDate: string): IRRData {
+  return { fundIrr: null, investorIrr: null, valuationDate: cutoffDate };
+}
+
+function buildKpis(composition: PortfolioComposition, capitalCommitted: number): KPIs {
+  const totalIncome = 0;
+  return {
+    totalPortfolioValue: composition.total,
+    capitalCommitted,
+    pctSinceEntry: capitalCommitted > 0 ? (composition.total - capitalCommitted) / capitalCommitted : 0,
+    moic: capitalCommitted > 0 ? (composition.total + totalIncome) / capitalCommitted : 0,
+    moicTarget: settings.moicTarget,
+    currentYield: composition.total > 0 ? totalIncome / composition.total : 0,
+    distributionsTotal: totalIncome,
+    distributionsCount: 0,
+    distributionsLastDate: null,
+    totalIncome,
+  };
+}
+
+async function latestDataDate(): Promise<string | null> {
+  const rows = await query<{ cutoff_date: string | null }>(
+    `SELECT GREATEST(
+       COALESCE((SELECT MAX(as_of_date) FROM admin_controls), DATE '1900-01-01'),
+       COALESCE((SELECT MAX(as_of_date) FROM admin_manual_values), DATE '1900-01-01')
+     )::text AS cutoff_date`
+  );
+  const value = rows[0]?.cutoff_date;
+  return value && value !== "1900-01-01" ? toDateOnly(value) : null;
+}
+
+async function latestControl(cutoffDate: string): Promise<ControlRow | null> {
+  const rows = await query<ControlRow>(
+    `SELECT portfolio_id, investor_name, as_of_date, capital_committed
+     FROM admin_controls
+     WHERE as_of_date <= $1
+     ORDER BY as_of_date DESC, created_at DESC
+     LIMIT 1`,
+    [cutoffDate]
+  );
+  return rows[0] ?? null;
+}
+
+async function latestManualRows(cutoffDate: string): Promise<ManualSummaryRow[]> {
+  return query<ManualSummaryRow>(
+    `WITH picked AS (
+       SELECT DISTINCT ON (mv.item_key)
+         mv.item_key,
+         mv.as_of_date,
+         mv.value,
+         mv.currency
+       FROM admin_manual_values mv
+       WHERE mv.as_of_date <= $1
+       ORDER BY mv.item_key, mv.as_of_date DESC, mv.created_at DESC
+     )
+     SELECT
+       p.item_key,
+       d.display_name,
+       d.item_type,
+       d.subcategory,
+       COALESCE(NULLIF(p.currency, ''), d.currency, 'EUR') AS currency,
+       p.as_of_date,
+       p.value
+     FROM picked p
+     JOIN asset_dictionary d ON d.item_key = p.item_key
+     WHERE d.active = TRUE
+     ORDER BY d.sort_order, d.item_key`,
+    [cutoffDate]
+  );
+}
+
+function holdingsFromManualRows(rows: ManualSummaryRow[], total: number): Holding[] {
+  return rows.map((row) => {
+    const value = Number(row.value);
+    return {
+      security: row.display_name,
+      assetClass: normalizeType(row.item_type) === "cash" ? "Cash" : row.subcategory || "Non-Listed",
+      currency: row.currency || "EUR",
+      shares: 1,
+      avgCost: value,
+      costBasis: value,
+      currentPrice: value,
+      marketValue: value,
+      unrealizedPnl: 0,
+      pnlPct: 0,
+      weight: total > 0 ? value / total : 0,
+    };
+  });
+}
+
+export async function getPortfolioSnapshot(): Promise<PortfolioSnapshot> {
+  if (!dbEnabled()) {
+    throw new Error("Database not configured. Set DATABASE_URL to read the Render portfolio data.");
+  }
+
+  await initSchema();
+
+  const cutoffDate = (await latestDataDate()) ?? new Date().toISOString().split("T")[0];
+  const control = await latestControl(cutoffDate);
+  const manualRows = await latestManualRows(cutoffDate);
+
+  const totals = manualRows.reduce(
+    (acc, row) => {
+      const value = Number(row.value);
+      if (normalizeType(row.item_type) === "cash") acc.cash += value;
+      else acc.nonListed += value;
+      return acc;
+    },
+    { cash: 0, nonListed: 0 }
+  );
+
+  const composition: PortfolioComposition = {
+    listed: 0,
+    nonListed: totals.nonListed,
+    cash: totals.cash,
+    total: totals.nonListed + totals.cash,
+  };
+
+  const capitalCommitted = control ? Number(control.capital_committed) : 0;
+  const holdings = holdingsFromManualRows(manualRows, composition.total);
+  const warnings =
+    composition.total > 0
+      ? ["Listed-market data is not present in Render yet; dashboard totals currently reflect admin-entered non-listed and cash values."]
+      : ["No Render portfolio values have been entered yet."];
 
   return {
-    kpis,
-    timeseries,
-    allocation,
-    irr,
-    risk,
-    distributions,
-    targets,
+    kpis: buildKpis(composition, capitalCommitted),
+    timeseries: [] as NavPoint[],
+    allocation: allocationFromComposition(composition),
+    irr: emptyIrr(cutoffDate),
+    risk: emptyRisk(),
+    distributions: [] as DistributionEvent[],
+    targets: targetsFromComposition(composition),
     holdings,
     composition,
-    pnl,
-    directaCash,
-    cutoffDate: data.cutoffDate.toISOString().split("T")[0],
-    investorName: env.INVESTOR_NAME,
-    portfolioId: env.PORTFOLIO_ID,
+    pnl: emptyPnL(),
+    directaCash: 0,
+    cutoffDate,
+    investorName: control?.investor_name || env.INVESTOR_NAME,
+    portfolioId: control?.portfolio_id || env.PORTFOLIO_ID,
     warnings,
   };
 }

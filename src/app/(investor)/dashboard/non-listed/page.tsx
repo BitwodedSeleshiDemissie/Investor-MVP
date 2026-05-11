@@ -17,7 +17,7 @@ export default async function NonListedPage() {
       <div className="pt-1">
         <h1 className="text-xl font-bold text-foreground tracking-tight">Non-Listed / Approved Values</h1>
         <p className="text-sm text-muted-foreground mt-0.5">
-          Monthly values approved by administrator · {cutoffDate}
+          Monthly values approved by administrator - {cutoffDate}
         </p>
       </div>
 
@@ -28,7 +28,7 @@ export default async function NonListedPage() {
           <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-widest mb-3">Total Non-Listed</p>
           <p className="font-numeric text-5xl font-bold text-foreground leading-none">{formatEur(total)}</p>
           <p className="text-xs text-muted-foreground mt-2">
-            {rows.length > 0 ? `${rows.length} assets · last admin valuation` : "Data from Excel workbook"}
+            {rows.length > 0 ? `${rows.length} assets - last admin valuation` : "No Render values entered yet"}
           </p>
         </div>
         <div className="p-4 rounded-xl bg-purple-500/10 border border-purple-500/20">
@@ -44,7 +44,7 @@ export default async function NonListedPage() {
             <p className="font-semibold text-warning">Database not configured</p>
             <p className="text-muted-foreground text-xs mt-0.5">
               Configure DATABASE_URL in .env.local and use the Admin panel to enter monthly values.
-              The total shown comes from the Excel workbook.
+              The total shown comes from Render once values are entered.
             </p>
           </div>
         </div>
@@ -84,7 +84,7 @@ export default async function NonListedPage() {
                         <p className="text-[11px] text-muted-foreground font-mono mt-0.5">{r.itemKey}</p>
                       </td>
                       <td className="px-5 py-4 hidden sm:table-cell text-sm text-muted-foreground">
-                        {r.holdingName ?? "—"}
+                        {r.holdingName ?? "-"}
                       </td>
                       <td className="px-5 py-4 text-right">
                         <span className="font-numeric text-base font-bold text-purple-400">{formatEur(r.value)}</span>

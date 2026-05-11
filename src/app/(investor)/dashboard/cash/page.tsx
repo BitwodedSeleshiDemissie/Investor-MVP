@@ -25,15 +25,15 @@ export default async function CashPage() {
         label: r.holdingName ?? r.displayName,
         sublabel: r.displayName,
         value: r.value,
-        source: `Admin — ${formatDate(r.valueDate)}`,
+        source: `Admin - ${formatDate(r.valueDate)}`,
       });
     });
   } else if (externalFromComposition > 0 && directa > 0) {
     rows.push({
       label: "External Cash",
-      sublabel: "External liquidity (from workbook)",
+      sublabel: "External liquidity from Render",
       value: externalFromComposition,
-      source: "Excel workbook",
+      source: "Render admin values",
     });
   }
 
@@ -42,7 +42,7 @@ export default async function CashPage() {
       <div className="pt-1">
         <h1 className="text-xl font-bold text-foreground tracking-tight">Cash &amp; Liquidity</h1>
         <p className="text-sm text-muted-foreground mt-0.5">
-          Cash balances by account · {cutoffDate}
+          Cash balances by account - {cutoffDate}
         </p>
       </div>
 
@@ -59,7 +59,7 @@ export default async function CashPage() {
               <Wallet className="w-4 h-4 text-blue-400" />
             </div>
             <p className="text-xs text-muted-foreground">
-              {rows.length > 0 ? `${rows.length} accounts` : "From Excel workbook"}
+              {rows.length > 0 ? `${rows.length} accounts` : "No Render values entered yet"}
             </p>
           </div>
         </div>
@@ -110,7 +110,7 @@ export default async function CashPage() {
           <Database className="w-4 h-4 text-warning shrink-0 mt-0.5" />
           <div>
             <p className="font-semibold text-warning">Database not configured</p>
-            <p className="text-muted-foreground text-xs mt-0.5">Cash balances shown come from the Excel workbook. Configure DATABASE_URL to enter monthly balances from Admin.</p>
+            <p className="text-muted-foreground text-xs mt-0.5">Configure DATABASE_URL to read monthly balances from Render.</p>
           </div>
         </div>
       )}

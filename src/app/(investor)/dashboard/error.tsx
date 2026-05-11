@@ -16,7 +16,7 @@ export default function DashboardError({ error, reset }: ErrorPageProps) {
       <div>
         <h2 className="text-xl font-bold text-foreground mb-2">Errore nel caricamento</h2>
         <p className="text-sm text-muted-foreground max-w-md">
-          {error.message || "Impossibile caricare i dati del portfolio. Verifica il file Excel e la connessione al database."}
+          {error.message || "Impossibile caricare i dati del portfolio. Verifica la connessione al database."}
         </p>
       </div>
       <button
