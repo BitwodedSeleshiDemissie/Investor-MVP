@@ -9,6 +9,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+from anagrafe import anagrafe_mtime_ns, enrich_holdings_with_anagrafe, load_current_anagrafe
 from calculations import (
     BETA_UNAVAILABLE_WARNING,
     check_nav_reconciliation,
@@ -89,9 +90,11 @@ def require_authentication() -> None:
 # ── Data loading (cached) ─────────────────────────────────────────────────────
 
 @st.cache_data(show_spinner="Loading workbook…")
-def load_data(workbook_mtime_ns: int):
+def load_data(workbook_mtime_ns: int, anagrafe_baseline_mtime_ns: int):
     _ = workbook_mtime_ns
+    _ = anagrafe_baseline_mtime_ns
     data = load_workbook(settings.excel_path)
+    anagrafe = load_current_anagrafe()
     kpis   = compute_kpis(data, settings)
     ts     = compute_timeseries(data)
     alloc  = compute_allocation(data)
@@ -103,7 +106,7 @@ def load_data(workbook_mtime_ns: int):
     warns  = check_nav_reconciliation(data, settings.nav_reconciliation_tolerance)
     pm     = data.portfolio_metrics
     ds     = data.dashboard_summary
-    return kpis, ts, alloc, irr, risk, dist, tgt, holds, warns, pm, ds
+    return kpis, ts, alloc, irr, risk, dist, tgt, holds, warns, pm, ds, anagrafe
 
 
 def _workbook_mtime_ns() -> int:
@@ -116,7 +119,10 @@ require_authentication()
 if db_enabled():
     init_schema()
 
-kpis, ts, alloc, irr, risk, dist, tgt, holds, warns, pm, dashboard_summary = load_data(_workbook_mtime_ns())
+kpis, ts, alloc, irr, risk, dist, tgt, holds, warns, pm, dashboard_summary, anagrafe = load_data(
+    _workbook_mtime_ns(),
+    anagrafe_mtime_ns(),
+)
 cloud_snapshot = None
 if db_enabled():
     try:
@@ -138,6 +144,8 @@ with st.sidebar:
     st.caption(f"As of **{holds.cutoff_date}**")
     st.caption(f"Investor: **{settings.investor_name}**")
     st.caption(f"Portfolio: **{settings.portfolio_id}**")
+    if not anagrafe.empty:
+        st.caption(f"Anagrafe backbone: **{len(anagrafe[anagrafe['is_open']])} open rows**")
 
 # ── Header ────────────────────────────────────────────────────────────────────
 
@@ -578,14 +586,29 @@ holds_df = pd.DataFrame([
     for h in holds.holdings
     if h.shares > 0   # only open positions
 ])
+holds_df = enrich_holdings_with_anagrafe(holds_df, anagrafe)
 
 def _colour_pnl(val: float) -> str:
     return f"color: {GREEN}" if val >= 0 else f"color: {RED}"
 
 if not holds_df.empty:
     holds_df = holds_df.sort_values("Market Val", ascending=False)
+    display_cols = [
+        "Legal Name", "Security", "ISIN", "Anagrafe Code", "Tax Code",
+        "Registered Office", "Anagrafe Match", "Class", "CCY", "Shares", "Avg Cost", "Market Val",
+        "Unreal. P&L", "P&L %", "Weight",
+    ]
+    display_cols = [
+        column
+        for column in display_cols
+        if column in holds_df.columns
+        and (
+            column not in {"Legal Name", "ISIN", "Anagrafe Code", "Tax Code", "Registered Office"}
+            or holds_df[column].astype(str).str.strip().ne("").any()
+        )
+    ]
     st.dataframe(
-        holds_df.style.format({
+        holds_df[display_cols].style.format({
             "Avg Cost":    "{:.3f}",
             "Market Val":  "€{:,.0f}",
             "Unreal. P&L": "€{:,.0f}",

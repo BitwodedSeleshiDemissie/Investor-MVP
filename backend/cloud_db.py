@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+import json
 from typing import Optional
 
 import psycopg
@@ -83,6 +84,25 @@ def init_schema() -> None:
             )
             cur.execute(
                 """
+                CREATE TABLE IF NOT EXISTS admin_anagrafe_baselines (
+                    id BIGSERIAL PRIMARY KEY,
+                    file_name TEXT NOT NULL,
+                    content BYTEA NOT NULL,
+                    uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS admin_anagrafe_json_store (
+                    store_key TEXT PRIMARY KEY,
+                    payload JSONB NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                """
+            )
+            cur.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_admin_controls_asof
                 ON admin_controls (as_of_date, created_at);
                 """
@@ -91,6 +111,12 @@ def init_schema() -> None:
                 """
                 CREATE INDEX IF NOT EXISTS idx_admin_manual_values_key_asof
                 ON admin_manual_values (item_key, as_of_date, created_at);
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_admin_anagrafe_uploaded
+                ON admin_anagrafe_baselines (uploaded_at DESC, id DESC);
                 """
             )
             # Backward-compatibility rename requested by CFO.
@@ -157,6 +183,66 @@ def insert_manual_value(row: dict) -> None:
                 row,
             )
         conn.commit()
+
+
+def insert_anagrafe_baseline(file_name: str, content: bytes) -> None:
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO admin_anagrafe_baselines (file_name, content)
+                VALUES (%s, %s);
+                """,
+                (file_name, content),
+            )
+        conn.commit()
+
+
+def read_latest_anagrafe_baseline(include_content: bool = True) -> dict | None:
+    columns = "id, file_name, uploaded_at, content" if include_content else "id, file_name, uploaded_at"
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT {columns}
+                FROM admin_anagrafe_baselines
+                ORDER BY uploaded_at DESC, id DESC
+                LIMIT 1;
+                """
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+
+def write_anagrafe_json_store(store_key: str, payload: dict | list) -> None:
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO admin_anagrafe_json_store (store_key, payload, updated_at)
+                VALUES (%s, %s::jsonb, NOW())
+                ON CONFLICT (store_key) DO UPDATE SET
+                    payload = EXCLUDED.payload,
+                    updated_at = NOW();
+                """,
+                (store_key, json.dumps(payload)),
+            )
+        conn.commit()
+
+
+def read_anagrafe_json_store(store_key: str) -> dict | list | None:
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT payload
+                FROM admin_anagrafe_json_store
+                WHERE store_key = %s;
+                """,
+                (store_key,),
+            )
+            row = cur.fetchone()
+            return row["payload"] if row else None
 
 
 def read_active_dictionary() -> list[dict]:

@@ -1,11 +1,56 @@
-.venv/
+# ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
-.pytest_cache/
-.claude/
-.env
-.env.*
-*.log
 *.pyc
 *.pyo
 *.pyd
+*.pdb
+.venv/
+venv/
+env/
+.pytest_cache/
 .ipynb_checkpoints/
+
+# ── Environment / Secrets ─────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+*.out.log
+*.err.log
+
+# ── Next.js / Node ────────────────────────────────────────────────────────────
+node_modules/
+.next/
+out/
+build/
+.turbo/
+*.tsbuildinfo
+next-env.d.ts
+
+# ── Package manager noise ─────────────────────────────────────────────────────
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnp
+.pnp.js
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+Desktop.ini
+ehthumbs.db
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── Claude Code ───────────────────────────────────────────────────────────────
+.claude/
+
+# ── Sensitive / generated assets ─────────────────────────────────────────────
+*.xlsx
+*.xls
