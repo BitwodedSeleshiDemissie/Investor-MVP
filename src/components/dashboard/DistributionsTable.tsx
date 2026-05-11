@@ -35,8 +35,9 @@ export function DistributionsTable({ distributions }: { distributions: Distribut
       </div>
 
       <div className="rounded-xl border border-border/60 overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
+        <div className="max-h-[360px] overflow-auto">
+        <table className="w-full min-w-[620px] text-sm">
+          <thead className="sticky top-0 z-10">
             <tr className="border-b border-border/60" style={{ background: "hsl(222 35% 10%)" }}>
               <th className="text-left px-4 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Date</th>
               <th className="text-left px-4 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Security</th>
@@ -66,6 +67,7 @@ export function DistributionsTable({ distributions }: { distributions: Distribut
             ))}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   );

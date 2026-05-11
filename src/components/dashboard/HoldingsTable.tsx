@@ -30,8 +30,9 @@ export function HoldingsTable({ holdings }: { holdings: Holding[] }) {
 
   return (
     <div className="rounded-xl border border-border/60 overflow-hidden">
-      <table className="w-full text-sm">
-        <thead>
+      <div className="max-h-[520px] overflow-auto">
+      <table className="w-full min-w-[780px] text-sm">
+        <thead className="sticky top-0 z-10">
           <tr className="border-b border-border/60" style={{ background: "hsl(222 35% 10%)" }}>
             {["Security", "Class", "Mkt Value", "P&L", "P&L %", "Weight"].map((h) => (
               <th key={h}
@@ -89,7 +90,7 @@ export function HoldingsTable({ holdings }: { holdings: Holding[] }) {
             </tr>
           ))}
         </tbody>
-        <tfoot>
+        <tfoot className="sticky bottom-0 z-10">
           <tr className="border-t border-border/60" style={{ background: "hsl(222 35% 10%)" }}>
             <td className="px-4 py-3 text-xs font-semibold text-muted-foreground" colSpan={2}>
               {open.length} open positions
@@ -105,6 +106,7 @@ export function HoldingsTable({ holdings }: { holdings: Holding[] }) {
           </tr>
         </tfoot>
       </table>
+      </div>
     </div>
   );
 }
