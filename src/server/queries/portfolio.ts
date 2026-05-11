@@ -1,5 +1,4 @@
 import { dbEnabled, query } from "@/db/client";
-import { initSchema } from "@/db/schema";
 import type { PortfolioComposition, PortfolioSnapshot } from "@/types/portfolio";
 
 type SnapshotRow = {
@@ -134,7 +133,6 @@ export async function getPortfolioSnapshot(): Promise<PortfolioSnapshot> {
     throw new Error("Database not configured. Set DATABASE_URL to read the Render portfolio data.");
   }
 
-  await initSchema();
   const row = await readLatestSnapshot();
   if (!row) {
     throw new Error("No preprocessed portfolio snapshot found in Render. Import the latest monthly report first.");

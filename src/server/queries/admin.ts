@@ -1,5 +1,4 @@
 import { query, dbEnabled } from "@/db/client";
-import { initSchema } from "@/db/schema";
 import type { AdminDictionaryItem, ManualValueRow, ControlRow, AdminData } from "@/types/portfolio";
 
 function dateOnly(value: string | Date): string {
@@ -14,7 +13,6 @@ function dateTime(value: string | Date): string {
 
 export async function getLatestManualRows(cutoffDate: string, itemType: "non_listed" | "cash"): Promise<ManualValueRow[]> {
   if (!dbEnabled()) return [];
-  await initSchema();
   const rows = await query<{
     id: number; item_key: string; display_name: string; value_date: string;
     value: string; holding_name: string | null; created_at: string;
@@ -53,8 +51,6 @@ export async function getAdminData(): Promise<AdminData> {
   if (!dbEnabled()) {
     return { dictionary: [], manualValues: [], controls: [] };
   }
-
-  await initSchema();
 
   const [dictRows, valRows, ctrlRows] = await Promise.all([
     query<{
