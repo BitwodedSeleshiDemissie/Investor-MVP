@@ -53,17 +53,19 @@ export async function clearSessionCookie(): Promise<void> {
 }
 
 export function checkPassword(input: string, stored: string): boolean {
-  if (input.length !== stored.length) {
+  const normalizedInput = input.trim();
+  const normalizedStored = stored.trim();
+  if (normalizedInput.length !== normalizedStored.length) {
     let diff = 0;
-    const len = Math.max(input.length, stored.length);
+    const len = Math.max(normalizedInput.length, normalizedStored.length);
     for (let i = 0; i < len; i++) {
-      diff |= (input.charCodeAt(i) ?? 0) ^ (stored.charCodeAt(i) ?? 0);
+      diff |= (normalizedInput.charCodeAt(i) ?? 0) ^ (normalizedStored.charCodeAt(i) ?? 0);
     }
     return false;
   }
   let diff = 0;
-  for (let i = 0; i < input.length; i++) {
-    diff |= input.charCodeAt(i) ^ stored.charCodeAt(i);
+  for (let i = 0; i < normalizedInput.length; i++) {
+    diff |= normalizedInput.charCodeAt(i) ^ normalizedStored.charCodeAt(i);
   }
   return diff === 0;
 }
