@@ -2,6 +2,16 @@ import { query, dbEnabled } from "@/db/client";
 import { initSchema } from "@/db/schema";
 import type { AdminDictionaryItem, ManualValueRow, ControlRow, AdminData } from "@/types/portfolio";
 
+function dateOnly(value: string | Date): string {
+  if (value instanceof Date) return value.toISOString().split("T")[0];
+  return value.includes("T") ? value.split("T")[0] : value;
+}
+
+function dateTime(value: string | Date): string {
+  if (value instanceof Date) return value.toISOString();
+  return value;
+}
+
 export async function getLatestManualRows(cutoffDate: string, itemType: "non_listed" | "cash"): Promise<ManualValueRow[]> {
   if (!dbEnabled()) return [];
   await initSchema();
@@ -32,10 +42,10 @@ export async function getLatestManualRows(cutoffDate: string, itemType: "non_lis
     id: r.id,
     itemKey: r.item_key,
     displayName: r.display_name,
-    valueDate: r.value_date,
+    valueDate: dateOnly(r.value_date),
     value: Number(r.value),
     holdingName: r.holding_name,
-    createdAt: r.created_at,
+    createdAt: dateTime(r.created_at),
   }));
 }
 
@@ -95,16 +105,16 @@ export async function getAdminData(): Promise<AdminData> {
       id: r.id,
       itemKey: r.item_key,
       displayName: r.display_name,
-      valueDate: r.value_date,
+      valueDate: dateOnly(r.value_date),
       value: Number(r.value),
       holdingName: r.holding_name,
-      createdAt: r.created_at,
+      createdAt: dateTime(r.created_at),
     })),
     controls: ctrlRows.map((r) => ({
       id: r.id,
-      asOfDate: r.as_of_date,
+      asOfDate: dateOnly(r.as_of_date),
       capitalCommitted: Number(r.capital_committed),
-      createdAt: r.created_at,
+      createdAt: dateTime(r.created_at),
     })),
   };
 }
