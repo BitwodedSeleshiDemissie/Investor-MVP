@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Ariete Invest — Investor Portal",
-  description: "Private portfolio reporting for Ariete Invest clients",
+  title: "Ariete Investor Portal",
+  description: "Private portfolio reporting for Ariete Capital clients",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
