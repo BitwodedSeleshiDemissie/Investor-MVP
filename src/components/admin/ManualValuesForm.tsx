@@ -9,7 +9,6 @@ import type { AdminDictionaryItem } from "@/types/portfolio";
 
 const schema = z.object({
   itemKey: z.string().min(1),
-  displayName: z.string().min(1),
   valueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   value: z.coerce.number().nonnegative(),
   holdingName: z.string().optional(),
@@ -24,25 +23,30 @@ interface Props {
 
 export function ManualValuesForm({ items, onSaved }: Props) {
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [errorMessage, setErrorMessage] = useState("Error saving data");
   const nonListed = items.filter((i) => i.itemType === "non_listed");
 
-  const { register, handleSubmit, reset, watch, setValue, formState: { errors } } = useForm<FormValues>({
+  const { register, handleSubmit, reset, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(schema),
   });
 
-  const selectedKey = watch("itemKey");
-  const selectedItem = nonListed.find((i) => i.itemKey === selectedKey);
-
   async function onSubmit(values: FormValues) {
     setStatus("saving");
-    const item = nonListed.find((i) => i.itemKey === values.itemKey);
-    const result = await saveManualValue({ ...values, displayName: item?.displayName ?? values.itemKey });
-    if (result?.data?.success) {
-      setStatus("saved");
-      reset();
-      onSaved?.();
-      setTimeout(() => setStatus("idle"), 3000);
-    } else {
+    setErrorMessage("Error saving data");
+    try {
+      const item = nonListed.find((i) => i.itemKey === values.itemKey);
+      const result = await saveManualValue({ ...values, displayName: item?.displayName ?? values.itemKey });
+      if (result?.data?.success) {
+        setStatus("saved");
+        reset();
+        onSaved?.();
+        setTimeout(() => setStatus("idle"), 3000);
+      } else {
+        setErrorMessage(result?.serverError ?? result?.data?.error ?? "Error saving data");
+        setStatus("error");
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Error saving data");
       setStatus("error");
     }
   }
@@ -103,7 +107,7 @@ export function ManualValuesForm({ items, onSaved }: Props) {
       >
         {status === "saving" ? "Saving…" : status === "saved" ? "✓ Saved" : "Save Value"}
       </button>
-      {status === "error" && <p className="text-destructive text-xs text-center">Error saving data</p>}
+      {status === "error" && <p className="text-destructive text-xs text-center">{errorMessage}</p>}
     </form>
   );
 }

@@ -22,6 +22,7 @@ interface Props {
 
 export function CashValuesForm({ items, onSaved }: Props) {
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [errorMessage, setErrorMessage] = useState("Error saving data");
   const cashItems = items.filter((i) => i.itemType === "cash");
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm<FormValues>({
@@ -30,14 +31,21 @@ export function CashValuesForm({ items, onSaved }: Props) {
 
   async function onSubmit(values: FormValues) {
     setStatus("saving");
-    const item = cashItems.find((i) => i.itemKey === values.itemKey);
-    const result = await saveManualValue({ ...values, displayName: item?.displayName ?? values.itemKey });
-    if (result?.data?.success) {
-      setStatus("saved");
-      reset();
-      onSaved?.();
-      setTimeout(() => setStatus("idle"), 3000);
-    } else {
+    setErrorMessage("Error saving data");
+    try {
+      const item = cashItems.find((i) => i.itemKey === values.itemKey);
+      const result = await saveManualValue({ ...values, displayName: item?.displayName ?? values.itemKey });
+      if (result?.data?.success) {
+        setStatus("saved");
+        reset();
+        onSaved?.();
+        setTimeout(() => setStatus("idle"), 3000);
+      } else {
+        setErrorMessage(result?.serverError ?? result?.data?.error ?? "Error saving data");
+        setStatus("error");
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Error saving data");
       setStatus("error");
     }
   }
@@ -88,7 +96,7 @@ export function CashValuesForm({ items, onSaved }: Props) {
       >
         {status === "saving" ? "Saving…" : status === "saved" ? "✓ Saved" : "Save Balance"}
       </button>
-      {status === "error" && <p className="text-destructive text-xs text-center">Error saving data</p>}
+      {status === "error" && <p className="text-destructive text-xs text-center">{errorMessage}</p>}
     </form>
   );
 }
