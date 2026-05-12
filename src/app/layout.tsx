@@ -6,11 +6,11 @@ export const metadata: Metadata = {
   description: "Private portfolio reporting for Ariete Capital clients",
   icons: {
     icon: [
-      { url: "/favicon.ico", sizes: "any" },
-      { url: "/favicon.png", type: "image/png" },
+      { url: "/icon.png?v=agent-portal", sizes: "604x604", type: "image/png" },
+      { url: "/favicon.ico?v=agent-portal", sizes: "any" },
     ],
-    shortcut: "/favicon.ico",
-    apple: "/favicon.png",
+    shortcut: "/icon.png?v=agent-portal",
+    apple: [{ url: "/apple-icon.png?v=agent-portal", sizes: "604x604", type: "image/png" }],
   },
 };
 
