@@ -4,7 +4,6 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { useRouter } from "next/navigation";
 import { Eye, EyeOff, Lock, LogIn } from "lucide-react";
 import { loginAction } from "@/server/actions/auth";
 
@@ -16,7 +15,6 @@ const schema = z.object({
 type FormValues = z.infer<typeof schema>;
 
 export function LoginForm() {
-  const router = useRouter();
   const [showPw, setShowPw] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
 
@@ -41,8 +39,7 @@ export function LoginForm() {
       return;
     }
     if (result?.data?.success) {
-      router.push(values.role === "admin" ? "/admin" : "/dashboard");
-      router.refresh();
+      window.location.assign(values.role === "admin" ? "/admin" : "/dashboard");
     }
   }
 
