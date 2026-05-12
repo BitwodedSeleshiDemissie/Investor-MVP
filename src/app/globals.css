@@ -85,6 +85,28 @@
 }
 
 @layer utilities {
+  .agent-login-scope {
+    --background: 222 47% 6%;
+    --foreground: 210 20% 95%;
+    --card: 222 47% 8%;
+    --card-foreground: 210 20% 95%;
+    --primary: 26 82% 52%;
+    --primary-foreground: 210 20% 98%;
+    --secondary: 222 30% 14%;
+    --secondary-foreground: 210 20% 95%;
+    --muted: 222 30% 14%;
+    --muted-foreground: 215 20% 55%;
+    --accent: 26 82% 52%;
+    --accent-foreground: 210 20% 98%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 210 20% 98%;
+    --border: 222 30% 18%;
+    --input: 222 30% 18%;
+    --ring: 26 82% 52%;
+    --radius: 0.75rem;
+    --gradient-hero: linear-gradient(135deg, hsl(222 47% 6%) 0%, hsl(222 47% 12%) 100%);
+  }
+
   .text-gradient-gold {
     background: var(--gradient-gold);
     -webkit-background-clip: text;
@@ -94,6 +116,7 @@
   .bg-gradient-gold        { background: var(--gradient-gold); }
   .bg-gradient-gold-soft   { background: var(--gradient-gold-soft); }
   .bg-gradient-card        { background: var(--gradient-card); }
+  .bg-gradient-hero        { background: var(--gradient-hero); }
   .shadow-gold             { box-shadow: var(--shadow-gold); }
   .shadow-card             { box-shadow: var(--shadow-card); }
   .shadow-elevated         { box-shadow: var(--shadow-elevated); }

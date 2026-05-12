@@ -1,33 +1,40 @@
 "use client";
 
 import { useState } from "react";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Loader2, Mail, Lock } from "lucide-react";
 import { z } from "zod";
-import { Loader2, Lock, Mail } from "lucide-react";
 import { loginAction } from "@/server/actions/auth";
 
-const schema = z.object({
-  email: z.string().email("Email non valida"),
-  password: z.string().min(6, "La password deve avere almeno 6 caratteri"),
-});
-
-type FormValues = z.infer<typeof schema>;
+const emailSchema = z.string().email("Email non valida");
+const passwordSchema = z.string().min(6, "La password deve avere almeno 6 caratteri");
 
 export function LoginForm() {
+  const [isLoading, setIsLoading] = useState(false);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [serverError, setServerError] = useState<string | null>(null);
 
-  const {
-    register,
-    handleSubmit,
-    formState: { errors, isSubmitting },
-  } = useForm<FormValues>({
-    resolver: zodResolver(schema),
-  });
-
-  async function onSubmit(values: FormValues) {
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
     setServerError(null);
-    const result = await loginAction(values);
+
+    try {
+      emailSchema.parse(email);
+      passwordSchema.parse(password);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        setServerError(err.errors[0].message);
+        return;
+      }
+    }
+
+    setIsLoading(true);
+    const result = await loginAction({ email, password });
+    setIsLoading(false);
 
     if (result?.data?.error) {
       setServerError(result.data.error);
@@ -37,67 +44,77 @@ export function LoginForm() {
     if (result?.data?.success) {
       window.location.assign(result.data.role === "admin" ? "/admin" : "/dashboard");
     }
-  }
+  };
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-      <div className="space-y-2">
-        <label htmlFor="email" className="block text-sm font-semibold leading-none text-foreground">
-          E-mail
-        </label>
-        <div className="relative">
-          <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <input
-            {...register("email")}
-            id="email"
-            type="email"
-            placeholder="name@email.com"
-            autoComplete="email"
-            className="flex h-12 w-full rounded-lg border border-input bg-background px-3 py-2 pl-10 text-base text-foreground ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-          />
-        </div>
-        {errors.email && <p className="text-xs text-destructive">{errors.email.message}</p>}
-      </div>
-
-      <div className="space-y-2">
-        <label htmlFor="password" className="block text-sm font-semibold leading-none text-foreground">
-          Password
-        </label>
-        <div className="relative">
-          <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <input
-            {...register("password")}
-            id="password"
-            type="password"
-            placeholder="••••••••"
-            autoComplete="current-password"
-            suppressHydrationWarning
-            className="flex h-12 w-full rounded-lg border border-input bg-background px-3 py-2 pl-10 text-base text-foreground ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-          />
-        </div>
-        {errors.password && <p className="text-xs text-destructive">{errors.password.message}</p>}
-      </div>
-
-      {serverError && (
-        <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
-          {serverError}
-        </div>
-      )}
-
-      <button
-        type="submit"
-        disabled={isSubmitting}
-        className="inline-flex h-12 w-full items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
-      >
-        {isSubmitting ? (
-          <>
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            Signing in...
-          </>
-        ) : (
-          "Sign in"
-        )}
-      </button>
-    </form>
+    <div className="min-h-screen bg-gradient-hero flex items-center justify-center p-4 agent-login-scope">
+      <Card className="w-full max-w-md border-border bg-card">
+        <CardHeader className="text-center space-y-4">
+          <div className="flex justify-center">
+            <img src="/ariete-logo.png" alt="Ariete Capital" className="h-16 w-auto" />
+          </div>
+          <div>
+            <CardTitle className="text-2xl font-bold text-foreground">Investor Portal</CardTitle>
+            <CardDescription className="text-muted-foreground">
+              Login
+            </CardDescription>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="email" className="text-foreground">E-mail</Label>
+              <div className="relative">
+                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  id="email"
+                  name="email"
+                  type="email"
+                  placeholder="name@email.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="pl-10"
+                  required
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="password" className="text-foreground">Password</Label>
+              <div className="relative">
+                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  id="password"
+                  name="password"
+                  type="password"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="pl-10"
+                  required
+                />
+              </div>
+            </div>
+            {serverError && (
+              <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
+                {serverError}
+              </div>
+            )}
+            <Button type="submit" className="w-full" disabled={isLoading}>
+              {isLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Signing in...
+                </>
+              ) : (
+                "Sign in"
+              )}
+            </Button>
+          </form>
+          <p className="text-center text-xs text-muted-foreground mt-6">
+            Access by invitation only
+          </p>
+        </CardContent>
+      </Card>
+    </div>
   );
 }
