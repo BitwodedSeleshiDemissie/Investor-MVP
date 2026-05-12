@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { useRouter } from "next/navigation";
 import { saveDictionaryItem, deleteDictionaryItem } from "@/server/actions/admin";
 import type { AdminDictionaryItem } from "@/types/portfolio";
 import { Trash2 } from "lucide-react";
@@ -25,7 +26,9 @@ interface Props {
 }
 
 export function DictionaryManager({ items, onSaved }: Props) {
+  const router = useRouter();
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [errorMessage, setErrorMessage] = useState("Error saving data");
   const { register, handleSubmit, reset, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: { itemType: "non_listed", currency: "EUR", sortOrder: 0 },
@@ -33,13 +36,21 @@ export function DictionaryManager({ items, onSaved }: Props) {
 
   async function onSubmit(values: FormValues) {
     setStatus("saving");
-    const result = await saveDictionaryItem(values);
-    if (result?.data?.success) {
-      setStatus("saved");
-      reset();
-      onSaved?.();
-      setTimeout(() => setStatus("idle"), 2000);
-    } else {
+    setErrorMessage("Error saving data");
+    try {
+      const result = await saveDictionaryItem(values);
+      if (result?.data?.success) {
+        setStatus("saved");
+        reset();
+        onSaved?.();
+        router.refresh();
+        setTimeout(() => setStatus("idle"), 2000);
+      } else {
+        setErrorMessage(result?.serverError ?? result?.data?.error ?? "Error saving data");
+        setStatus("error");
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Error saving data");
       setStatus("error");
     }
   }
@@ -48,6 +59,7 @@ export function DictionaryManager({ items, onSaved }: Props) {
     if (!confirm(`Remove "${itemKey}" from the dictionary?`)) return;
     await deleteDictionaryItem({ itemKey });
     onSaved?.();
+    router.refresh();
   }
 
   return (
@@ -56,18 +68,20 @@ export function DictionaryManager({ items, onSaved }: Props) {
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-3">
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="block text-xs font-medium text-muted-foreground mb-1">Key (item_key)</label>
+            <label htmlFor="dict-itemKey" className="block text-xs font-medium text-muted-foreground mb-1">Key (item_key)</label>
             <input
               {...register("itemKey")}
+              id="dict-itemKey"
               placeholder="e.g. fund_xyz"
               className="w-full px-3 py-2 bg-secondary/50 border border-border rounded-lg text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
             />
             {errors.itemKey && <p className="text-destructive text-xs mt-0.5">Required</p>}
           </div>
           <div>
-            <label className="block text-xs font-medium text-muted-foreground mb-1">Display Name</label>
+            <label htmlFor="dict-displayName" className="block text-xs font-medium text-muted-foreground mb-1">Display Name</label>
             <input
               {...register("displayName")}
+              id="dict-displayName"
               placeholder="e.g. Fund XYZ"
               className="w-full px-3 py-2 bg-secondary/50 border border-border rounded-lg text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
             />
@@ -75,9 +89,10 @@ export function DictionaryManager({ items, onSaved }: Props) {
         </div>
         <div className="grid grid-cols-3 gap-3">
           <div>
-            <label className="block text-xs font-medium text-muted-foreground mb-1">Type</label>
+            <label htmlFor="dict-itemType" className="block text-xs font-medium text-muted-foreground mb-1">Type</label>
             <select
               {...register("itemType")}
+              id="dict-itemType"
               className="w-full px-3 py-2 bg-secondary/50 border border-border rounded-lg text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
             >
               <option value="non_listed">Non-Listed</option>
@@ -85,17 +100,19 @@ export function DictionaryManager({ items, onSaved }: Props) {
             </select>
           </div>
           <div>
-            <label className="block text-xs font-medium text-muted-foreground mb-1">Currency</label>
+            <label htmlFor="dict-currency" className="block text-xs font-medium text-muted-foreground mb-1">Currency</label>
             <input
               {...register("currency")}
+              id="dict-currency"
               placeholder="EUR"
               className="w-full px-3 py-2 bg-secondary/50 border border-border rounded-lg text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-muted-foreground mb-1">Sort Order</label>
+            <label htmlFor="dict-sortOrder" className="block text-xs font-medium text-muted-foreground mb-1">Sort Order</label>
             <input
               {...register("sortOrder")}
+              id="dict-sortOrder"
               type="number"
               defaultValue={0}
               className="w-full px-3 py-2 bg-secondary/50 border border-border rounded-lg text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
@@ -109,6 +126,7 @@ export function DictionaryManager({ items, onSaved }: Props) {
         >
           {status === "saving" ? "Saving…" : status === "saved" ? "✓ Saved" : "Add / Update"}
         </button>
+        {status === "error" && <p className="text-destructive text-xs text-center">{errorMessage}</p>}
       </form>
 
       {/* Table */}
@@ -138,6 +156,7 @@ export function DictionaryManager({ items, onSaved }: Props) {
                   <td className="px-4 py-2.5">
                     <button
                       type="button"
+                      aria-label={`Remove ${item.displayName}`}
                       onClick={() => handleDelete(item.itemKey)}
                       className="p-1 text-muted-foreground hover:text-destructive transition-colors"
                     >

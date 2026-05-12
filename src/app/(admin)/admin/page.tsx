@@ -8,8 +8,8 @@ export default async function AdminPage() {
   const isDbEnabled = dbEnabled();
   const adminData = await getAdminData();
 
-  const nlValues = adminData.manualValues.filter((v) => !v.itemKey.startsWith("cash"));
-  const cashValues = adminData.manualValues.filter((v) => v.itemKey.startsWith("cash"));
+  const nlValues = adminData.manualValues.filter((v) => v.itemType === "non_listed");
+  const cashValues = adminData.manualValues.filter((v) => v.itemType === "cash");
 
   // Latest per asset
   const latestNL = new Map<string, typeof nlValues[number]>();
@@ -172,11 +172,11 @@ export default async function AdminPage() {
                     </td>
                     <td className="px-5 py-3.5 hidden sm:table-cell">
                       <span className={`px-2 py-0.5 rounded-full text-xs border ${
-                        v.itemKey.startsWith("cash")
+                        v.itemType === "cash"
                           ? "bg-blue-500/10 text-blue-400 border-blue-500/20"
                           : "bg-purple-500/10 text-purple-400 border-purple-500/20"
                       }`}>
-                        {v.itemKey.startsWith("cash") ? "Cash" : "Non-Listed"}
+                        {v.itemType === "cash" ? "Cash" : "Non-Listed"}
                       </span>
                     </td>
                     <td className="px-5 py-3.5 text-right">

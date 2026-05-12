@@ -14,13 +14,14 @@ function dateTime(value: string | Date): string {
 export async function getLatestManualRows(cutoffDate: string, itemType: "non_listed" | "cash"): Promise<ManualValueRow[]> {
   if (!dbEnabled()) return [];
   const rows = await query<{
-    id: number; item_key: string; display_name: string; value_date: string;
+    id: number; item_key: string; display_name: string; item_type: string; value_date: string;
     value: string; holding_name: string | null; created_at: string;
   }>(
     `SELECT DISTINCT ON (mv.item_key)
         mv.item_key,
         mv.id,
         d.display_name,
+        CASE WHEN LOWER(d.item_type) = 'cash' THEN 'cash' ELSE 'non_listed' END AS item_type,
         mv.as_of_date AS value_date,
         mv.value,
         NULLIF(mv.notes, '') AS holding_name,
@@ -40,6 +41,7 @@ export async function getLatestManualRows(cutoffDate: string, itemType: "non_lis
     id: r.id,
     itemKey: r.item_key,
     displayName: r.display_name,
+    itemType: r.item_type as "non_listed" | "cash",
     valueDate: dateOnly(r.value_date),
     value: Number(r.value),
     holdingName: r.holding_name,
@@ -68,12 +70,13 @@ export async function getAdminData(): Promise<AdminData> {
         WHERE active = TRUE
         ORDER BY sort_order, display_name`),
     query<{
-      id: number; item_key: string; display_name: string; value_date: string;
+      id: number; item_key: string; display_name: string; item_type: string; value_date: string;
       value: string; holding_name: string | null; created_at: string;
     }>(`SELECT
           mv.id,
           mv.item_key,
           d.display_name,
+          CASE WHEN LOWER(d.item_type) = 'cash' THEN 'cash' ELSE 'non_listed' END AS item_type,
           mv.as_of_date AS value_date,
           mv.value,
           NULLIF(mv.notes, '') AS holding_name,
@@ -101,6 +104,7 @@ export async function getAdminData(): Promise<AdminData> {
       id: r.id,
       itemKey: r.item_key,
       displayName: r.display_name,
+      itemType: r.item_type as "non_listed" | "cash",
       valueDate: dateOnly(r.value_date),
       value: Number(r.value),
       holdingName: r.holding_name,

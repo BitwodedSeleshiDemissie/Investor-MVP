@@ -31,3 +31,8 @@ Thumbs.db
 
 # Vercel
 .vercel/
+
+# Test artifacts and local agent settings
+test-results/
+playwright-report/
+.claude/

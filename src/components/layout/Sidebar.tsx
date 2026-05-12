@@ -108,6 +108,8 @@ export function Sidebar({ role }: { role: Role }) {
 
       {/* Mobile FAB */}
       <button
+        type="button"
+        aria-label="Open menu"
         onClick={() => setOpen(true)}
         className="md:hidden fixed bottom-5 right-5 z-50 w-12 h-12 rounded-full bg-gradient-gold flex items-center justify-center shadow-gold"
       >
@@ -124,7 +126,12 @@ export function Sidebar({ role }: { role: Role }) {
           >
             <div className="flex items-center justify-between px-4 py-3 border-b border-border/60">
               <span className="text-sm font-semibold text-foreground">Menu</span>
-              <button onClick={() => setOpen(false)} className="text-muted-foreground hover:text-foreground p-1">
+              <button
+                type="button"
+                aria-label="Close menu"
+                onClick={() => setOpen(false)}
+                className="text-muted-foreground hover:text-foreground p-1"
+              >
                 <X className="w-4 h-4" />
               </button>
             </div>

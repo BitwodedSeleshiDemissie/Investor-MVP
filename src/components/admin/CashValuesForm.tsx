@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { useRouter } from "next/navigation";
 import { saveManualValue } from "@/server/actions/admin";
 import type { AdminDictionaryItem } from "@/types/portfolio";
 
@@ -21,6 +22,7 @@ interface Props {
 }
 
 export function CashValuesForm({ items, onSaved }: Props) {
+  const router = useRouter();
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState("Error saving data");
   const cashItems = items.filter((i) => i.itemType === "cash");
@@ -39,6 +41,7 @@ export function CashValuesForm({ items, onSaved }: Props) {
         setStatus("saved");
         reset();
         onSaved?.();
+        router.refresh();
         setTimeout(() => setStatus("idle"), 3000);
       } else {
         setErrorMessage(result?.serverError ?? result?.data?.error ?? "Error saving data");
@@ -53,9 +56,10 @@ export function CashValuesForm({ items, onSaved }: Props) {
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
       <div>
-        <label className="block text-xs font-medium text-muted-foreground mb-1">Cash Account</label>
+        <label htmlFor="cash-itemKey" className="block text-xs font-medium text-muted-foreground mb-1">Cash Account</label>
         <select
           {...register("itemKey")}
+          id="cash-itemKey"
           className="w-full px-3 py-2 bg-secondary/50 border border-border rounded-lg text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
         >
           <option value="">Select account…</option>
@@ -68,9 +72,10 @@ export function CashValuesForm({ items, onSaved }: Props) {
 
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="block text-xs font-medium text-muted-foreground mb-1">Balance (€)</label>
+          <label htmlFor="cash-value" className="block text-xs font-medium text-muted-foreground mb-1">Balance (€)</label>
           <input
             {...register("value")}
+            id="cash-value"
             type="number"
             step="0.01"
             placeholder="0.00"
@@ -79,9 +84,10 @@ export function CashValuesForm({ items, onSaved }: Props) {
           {errors.value && <p className="text-destructive text-xs mt-1">Invalid value</p>}
         </div>
         <div>
-          <label className="block text-xs font-medium text-muted-foreground mb-1">Balance Date</label>
+          <label htmlFor="cash-valueDate" className="block text-xs font-medium text-muted-foreground mb-1">Balance Date</label>
           <input
             {...register("valueDate")}
+            id="cash-valueDate"
             type="date"
             className="w-full px-3 py-2 bg-secondary/50 border border-border rounded-lg text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
           />

@@ -71,11 +71,12 @@ export function LoginForm() {
 
       {/* Password */}
       <div>
-        <label className="block text-sm font-medium text-foreground mb-1.5">Password</label>
+        <label htmlFor="password" className="block text-sm font-medium text-foreground mb-1.5">Password</label>
         <div className="relative">
           <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <input
             {...register("password")}
+            id="password"
             type={showPw ? "text" : "password"}
             placeholder="••••••••••"
             autoComplete="current-password"
@@ -84,6 +85,7 @@ export function LoginForm() {
           />
           <button
             type="button"
+            aria-label={showPw ? "Hide password" : "Show password"}
             onClick={() => setShowPw((v) => !v)}
             className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
           >

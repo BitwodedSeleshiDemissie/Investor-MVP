@@ -122,6 +122,7 @@ export interface ManualValueRow {
   id?: number;
   itemKey: string;
   displayName: string;
+  itemType: "non_listed" | "cash";
   valueDate: string;
   value: number;
   holdingName: string | null;

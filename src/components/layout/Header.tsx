@@ -46,6 +46,7 @@ export function Header({ role, investorName, portfolioId }: HeaderProps) {
           <form action={logoutAction}>
             <button
               type="submit"
+              aria-label="Sign out"
               className="h-8 w-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-all"
               title="Sign out"
             >

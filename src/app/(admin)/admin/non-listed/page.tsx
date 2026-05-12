@@ -7,7 +7,7 @@ import { formatEur, formatDate } from "@/lib/utils";
 
 export default async function AdminNonListedPage() {
   const { dictionary, manualValues } = await getAdminData();
-  const nlValues = manualValues.filter((v) => !v.itemKey.startsWith("cash"));
+  const nlValues = manualValues.filter((v) => v.itemType === "non_listed");
 
   // Latest per asset
   const latestByKey = new Map<string, typeof nlValues[number]>();

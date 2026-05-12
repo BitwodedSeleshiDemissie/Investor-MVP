@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { useRouter } from "next/navigation";
 import { saveControl } from "@/server/actions/admin";
 import type { ControlRow } from "@/types/portfolio";
 import { formatEur, formatDate } from "@/lib/utils";
@@ -21,20 +22,30 @@ interface Props {
 }
 
 export function PortfolioInputsForm({ controls, onSaved }: Props) {
+  const router = useRouter();
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [errorMessage, setErrorMessage] = useState("Error saving data");
   const { register, handleSubmit, reset, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(schema),
   });
 
   async function onSubmit(values: FormValues) {
     setStatus("saving");
-    const result = await saveControl(values);
-    if (result?.data?.success) {
-      setStatus("saved");
-      reset();
-      onSaved?.();
-      setTimeout(() => setStatus("idle"), 3000);
-    } else {
+    setErrorMessage("Error saving data");
+    try {
+      const result = await saveControl(values);
+      if (result?.data?.success) {
+        setStatus("saved");
+        reset();
+        onSaved?.();
+        router.refresh();
+        setTimeout(() => setStatus("idle"), 3000);
+      } else {
+        setErrorMessage(result?.serverError ?? result?.data?.error ?? "Error saving data");
+        setStatus("error");
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Error saving data");
       setStatus("error");
     }
   }
@@ -44,9 +55,10 @@ export function PortfolioInputsForm({ controls, onSaved }: Props) {
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="block text-xs font-medium text-muted-foreground mb-1">Capital Committed (€)</label>
+            <label htmlFor="ctrl-capitalCommitted" className="block text-xs font-medium text-muted-foreground mb-1">Capital Committed (€)</label>
             <input
               {...register("capitalCommitted")}
+              id="ctrl-capitalCommitted"
               type="number"
               step="0.01"
               placeholder="0.00"
@@ -55,9 +67,10 @@ export function PortfolioInputsForm({ controls, onSaved }: Props) {
             {errors.capitalCommitted && <p className="text-destructive text-xs mt-0.5">Invalid value</p>}
           </div>
           <div>
-            <label className="block text-xs font-medium text-muted-foreground mb-1">Reference Date</label>
+            <label htmlFor="ctrl-asOfDate" className="block text-xs font-medium text-muted-foreground mb-1">Reference Date</label>
             <input
               {...register("asOfDate")}
+              id="ctrl-asOfDate"
               type="date"
               className="w-full px-3 py-2 bg-secondary/50 border border-border rounded-lg text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
             />
@@ -71,6 +84,7 @@ export function PortfolioInputsForm({ controls, onSaved }: Props) {
         >
           {status === "saving" ? "Saving…" : status === "saved" ? "✓ Saved" : "Save Parameters"}
         </button>
+        {status === "error" && <p className="text-destructive text-xs text-center">{errorMessage}</p>}
       </form>
 
       {controls.length > 0 && (

@@ -7,7 +7,7 @@ import { formatEur, formatDate } from "@/lib/utils";
 
 export default async function AdminCashPage() {
   const { dictionary, manualValues } = await getAdminData();
-  const cashValues = manualValues.filter((v) => v.itemKey.startsWith("cash"));
+  const cashValues = manualValues.filter((v) => v.itemType === "cash");
 
   // Latest per account
   const latestByKey = new Map<string, typeof cashValues[number]>();
