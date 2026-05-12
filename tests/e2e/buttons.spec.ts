@@ -125,7 +125,7 @@ async function login(page: Page, role: "admin" | "investor") {
   await page.goto("/login");
   await page.locator('input[name="email"]').fill(role === "admin" ? adminEmail : investorEmail);
   await page.locator('input[name="password"]').fill(role === "admin" ? adminPassword! : investorPassword!);
-  await page.getByRole("button", { name: "Accedi" }).click();
+  await page.getByRole("button", { name: "Sign in" }).click();
 }
 
 async function openAdminCard(page: Page, name: string, url: RegExp) {

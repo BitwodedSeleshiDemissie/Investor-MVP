@@ -51,7 +51,7 @@ export function LoginForm() {
             {...register("email")}
             id="email"
             type="email"
-            placeholder="nome@email.com"
+            placeholder="name@email.com"
             autoComplete="email"
             className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 pl-10 text-sm text-foreground ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
           />
@@ -92,10 +92,10 @@ export function LoginForm() {
         {isSubmitting ? (
           <>
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            Accesso in corso...
+            Signing in...
           </>
         ) : (
-          "Accedi"
+          "Sign in"
         )}
       </button>
     </form>
