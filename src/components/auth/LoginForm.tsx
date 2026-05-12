@@ -42,8 +42,8 @@ export function LoginForm() {
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
       <div className="space-y-2">
-        <label htmlFor="email" className="text-sm font-medium leading-none text-foreground">
-          Email
+        <label htmlFor="email" className="block text-sm font-semibold leading-none text-foreground">
+          E-mail
         </label>
         <div className="relative">
           <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -53,14 +53,14 @@ export function LoginForm() {
             type="email"
             placeholder="name@email.com"
             autoComplete="email"
-            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 pl-10 text-sm text-foreground ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex h-12 w-full rounded-lg border border-input bg-background px-3 py-2 pl-10 text-base text-foreground ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
           />
         </div>
         {errors.email && <p className="text-xs text-destructive">{errors.email.message}</p>}
       </div>
 
       <div className="space-y-2">
-        <label htmlFor="password" className="text-sm font-medium leading-none text-foreground">
+        <label htmlFor="password" className="block text-sm font-semibold leading-none text-foreground">
           Password
         </label>
         <div className="relative">
@@ -72,7 +72,7 @@ export function LoginForm() {
             placeholder="••••••••"
             autoComplete="current-password"
             suppressHydrationWarning
-            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 pl-10 text-sm text-foreground ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex h-12 w-full rounded-lg border border-input bg-background px-3 py-2 pl-10 text-base text-foreground ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
           />
         </div>
         {errors.password && <p className="text-xs text-destructive">{errors.password.message}</p>}
@@ -87,7 +87,7 @@ export function LoginForm() {
       <button
         type="submit"
         disabled={isSubmitting}
-        className="inline-flex h-10 w-full items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+        className="inline-flex h-12 w-full items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
       >
         {isSubmitting ? (
           <>
