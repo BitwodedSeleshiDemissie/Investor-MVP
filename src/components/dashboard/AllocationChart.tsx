@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 import type { AllocationSlice } from "@/types/portfolio";
 import { formatEur } from "@/lib/utils";
@@ -27,9 +28,19 @@ function CustomTooltip({ active, payload }: any) {
 }
 
 export function AllocationChart({ data }: { data: AllocationSlice[] }) {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   if (!data.length) return (
     <div className="flex items-center justify-center h-48 text-muted-foreground text-sm">No data available</div>
   );
+
+  if (!mounted) {
+    return <div className="h-[220px]" aria-hidden="true" />;
+  }
 
   const total = data.reduce((s, d) => s + d.marketValue, 0);
 

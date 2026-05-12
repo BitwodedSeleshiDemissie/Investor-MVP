@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
@@ -25,6 +26,12 @@ function CustomTooltip({ active, payload, label }: any) {
 }
 
 export function TargetVsActualChart({ targets }: { targets: TargetVsActual }) {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   const cash_target = parseFloat(
     ((1 - targets.targetEquityPct - targets.targetBondPct - targets.targetAltPct) * 100).toFixed(1)
   );
@@ -35,6 +42,10 @@ export function TargetVsActualChart({ targets }: { targets: TargetVsActual }) {
     { name: "Alternatives", Target: +(targets.targetAltPct * 100).toFixed(1),   Actual: +(targets.currentAltPct * 100).toFixed(1) },
     { name: "Cash",        Target: cash_target,                                  Actual: +(targets.currentCashPct * 100).toFixed(1) },
   ];
+
+  if (!mounted) {
+    return <div className="h-[240px]" aria-hidden="true" />;
+  }
 
   return (
     <ResponsiveContainer width="100%" height={240}>

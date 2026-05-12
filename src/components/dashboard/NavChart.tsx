@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -46,6 +47,12 @@ function CustomTooltip({ active, payload, label }: any) {
 }
 
 export function NavChart({ data }: NavChartProps) {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   if (data.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-64 gap-2 text-muted-foreground">
@@ -53,6 +60,10 @@ export function NavChart({ data }: NavChartProps) {
         <p className="text-sm">No NAV data available</p>
       </div>
     );
+  }
+
+  if (!mounted) {
+    return <div className="h-[300px]" aria-hidden="true" />;
   }
 
   return (

@@ -1,4 +1,4 @@
-import { Building2, Wallet, Settings, Database, TrendingUp, List, ArrowRight, CheckCircle2, AlertCircle } from "lucide-react";
+import { Building2, Wallet, Settings, Database, TrendingUp, List, ArrowRight, CheckCircle2, AlertCircle, Upload } from "lucide-react";
 import Link from "next/link";
 import { getAdminData } from "@/server/queries/admin";
 import { dbEnabled } from "@/db/client";
@@ -28,6 +28,16 @@ export default async function AdminPage() {
   const latestControl = adminData.controls[0];
 
   const sections = [
+    {
+      href: "/admin/upload",
+      icon: Upload,
+      title: "Upload Monthly Report",
+      description: "Upload Directa CSVs & generate snapshot",
+      stat: "Upload new month",
+      color: "text-emerald-400",
+      bgColor: "bg-emerald-500/10",
+      ok: true,
+    },
     {
       href: "/admin/dictionary",
       icon: Building2,

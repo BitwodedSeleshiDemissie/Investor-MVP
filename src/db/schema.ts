@@ -53,6 +53,19 @@ export async function initSchema(): Promise<void> {
   `);
 
   await query(`
+    CREATE TABLE IF NOT EXISTS portfolio_snapshot_artifacts (
+      id BIGSERIAL PRIMARY KEY,
+      snapshot_id BIGINT REFERENCES portfolio_snapshots(id) ON DELETE CASCADE,
+      artifact_type TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      content BYTEA NOT NULL,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await query(`
     CREATE TABLE IF NOT EXISTS admin_anagrafe_baselines (
       id BIGSERIAL PRIMARY KEY,
       file_name TEXT NOT NULL,
@@ -85,8 +98,31 @@ export async function initSchema(): Promise<void> {
   `);
 
   await query(`
+    CREATE INDEX IF NOT EXISTS idx_portfolio_snapshot_artifacts_snapshot
+    ON portfolio_snapshot_artifacts (snapshot_id, created_at DESC)
+  `);
+
+  await query(`
     CREATE INDEX IF NOT EXISTS idx_admin_anagrafe_uploaded
     ON admin_anagrafe_baselines (uploaded_at DESC, id DESC)
+  `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS directa_csv_files (
+      id BIGSERIAL PRIMARY KEY,
+      filename TEXT NOT NULL UNIQUE,
+      month_end DATE,
+      content TEXT NOT NULL,
+      uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS security_tipo_cache (
+      security_name TEXT PRIMARY KEY,
+      tipo TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
   `);
 
   await query(`
