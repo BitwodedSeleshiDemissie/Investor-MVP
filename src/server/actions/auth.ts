@@ -3,25 +3,28 @@
 import { z } from "zod";
 import { actionClient } from "@/lib/safe-action";
 import { checkPassword, setSessionCookie, clearSessionCookie, type Role } from "@/lib/auth";
-import { env } from "@/lib/env";
 import { redirect } from "next/navigation";
 
 const loginSchema = z.object({
+  email: z.string().email(),
   password: z.string().min(1),
-  role: z.enum(["investor", "admin"]),
 });
 
+const demoUsers: Array<{ email: string; password: string; role: Role }> = [
+  { email: "admin@arietetest.com", password: "admintest", role: "admin" },
+  { email: "user@arietetest.com", password: "usertest", role: "investor" },
+];
+
 export const loginAction = actionClient.schema(loginSchema).action(async ({ parsedInput }) => {
-  const { password, role } = parsedInput;
-  const stored = role === "admin" ? env.ADMIN_PASSWORD : env.INVESTOR_PASSWORD;
-  const valid =
-    checkPassword(password, stored) ||
-    (role === "admin" && checkPassword(password, env.INVESTOR_PASSWORD));
-  if (!valid) {
-    return { error: "Password non corretta" };
+  const email = parsedInput.email.trim().toLowerCase();
+  const user = demoUsers.find((entry) => entry.email === email);
+
+  if (!user || !checkPassword(parsedInput.password, user.password)) {
+    return { error: "Credenziali non valide. Controlla email e password." };
   }
-  await setSessionCookie(role as Role);
-  return { success: true, role };
+
+  await setSessionCookie(user.role);
+  return { success: true, role: user.role };
 });
 
 export async function logoutAction() {

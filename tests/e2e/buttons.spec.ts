@@ -6,8 +6,10 @@ import { Client } from "pg";
 type Env = Record<string, string>;
 
 const env = loadLocalEnv();
-const adminPassword = process.env.E2E_ADMIN_PASSWORD ?? env.ADMIN_PASSWORD ?? env.INVESTOR_PASSWORD;
-const investorPassword = process.env.E2E_INVESTOR_PASSWORD ?? env.INVESTOR_PASSWORD ?? adminPassword;
+const adminEmail = process.env.E2E_ADMIN_EMAIL ?? "admin@arietetest.com";
+const adminPassword = process.env.E2E_ADMIN_PASSWORD ?? "admintest";
+const investorEmail = process.env.E2E_INVESTOR_EMAIL ?? "user@arietetest.com";
+const investorPassword = process.env.E2E_INVESTOR_PASSWORD ?? "usertest";
 const databaseUrl = process.env.DATABASE_URL ?? env.DATABASE_URL;
 
 const stamp = Date.now().toString();
@@ -20,7 +22,7 @@ const testDate = "2099-01-27";
 const controlValue = 987_654.32;
 
 test.describe.configure({ mode: "serial" });
-test.skip(!adminPassword || !investorPassword || !databaseUrl, "E2E needs passwords and DATABASE_URL in env/.env.local");
+test.skip(!databaseUrl, "E2E needs DATABASE_URL in env/.env.local");
 
 test.beforeAll(async () => {
   await cleanup();
@@ -121,11 +123,9 @@ test("all primary buttons and navigation controls work end to end", async ({ pag
 
 async function login(page: Page, role: "admin" | "investor") {
   await page.goto("/login");
-  await page.getByRole("button", { name: role === "admin" ? "Admin" : "Investor" }).click();
-  await page.getByRole("button", { name: "Show password" }).click();
-  await page.getByRole("button", { name: "Hide password" }).click();
+  await page.locator('input[name="email"]').fill(role === "admin" ? adminEmail : investorEmail);
   await page.locator('input[name="password"]').fill(role === "admin" ? adminPassword! : investorPassword!);
-  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.getByRole("button", { name: "Accedi" }).click();
 }
 
 async function openAdminCard(page: Page, name: string, url: RegExp) {
