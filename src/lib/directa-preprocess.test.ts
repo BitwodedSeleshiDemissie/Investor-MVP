@@ -48,7 +48,7 @@ function dateOnly(date: Date): string {
   ].join("-");
 }
 
-describe("Directa preprocessing MVP flow", () => {
+describe("Statement preprocessing MVP flow", () => {
   beforeAll(() => {
     vi.stubEnv("JWT_SECRET", "test-secret-at-least-sixteen-chars");
     vi.stubEnv("INVESTOR_PASSWORD", "usertest");

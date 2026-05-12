@@ -160,7 +160,7 @@ async function verifyDbSnapshot(snapshotId: number) {
       [snapshotId]
     );
     expect(artifactRows.rows).toHaveLength(1);
-    expect(artifactRows.rows[0].file_name).toBe("ariete-directa-audit-2099-04-30.xlsx");
+    expect(artifactRows.rows[0].file_name).toBe("ariete-statement-audit-2099-04-30.xlsx");
     expect(artifactRows.rows[0].bytes).toBeGreaterThan(10_000);
   } finally {
     await client.end();

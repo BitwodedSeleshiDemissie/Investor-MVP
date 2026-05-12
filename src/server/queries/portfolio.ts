@@ -20,7 +20,13 @@ type ControlRow = {
 };
 
 function dateOnly(value: string | Date): string {
-  if (value instanceof Date) return value.toISOString().split("T")[0];
+  if (value instanceof Date) {
+    return [
+      value.getFullYear(),
+      String(value.getMonth() + 1).padStart(2, "0"),
+      String(value.getDate()).padStart(2, "0"),
+    ].join("-");
+  }
   return value.includes("T") ? value.split("T")[0] : value;
 }
 

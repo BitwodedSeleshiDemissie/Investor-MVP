@@ -86,9 +86,9 @@ async function main(): Promise<void> {
       realized: Number(data.portfolioMetrics["Realized P&L"] ?? data.portfolioMetrics["Total Realized P&L"] ?? 0),
       netTotal: Number(data.portfolioMetrics["Net Total P&L"] ?? data.portfolioMetrics["Net P&L"] ?? 0),
     },
-    directaCash: Number(data.portfolioMetrics["Directa Cash"] ?? data.portfolioMetrics["Cash (Directa)"] ?? 0),
+    directaCash: Number(data.portfolioMetrics["Statement Cash"] ?? data.portfolioMetrics["Directa Cash"] ?? data.portfolioMetrics["Cash (Directa)"] ?? 0),
     cutoffDate,
-    investorName: process.env.INVESTOR_NAME || "Vasco Varo",
+    investorName: process.env.INVESTOR_NAME || "Investor",
     portfolioId: process.env.PORTFOLIO_ID || "AI-0042",
     warnings: checkWarnings(data),
   };

@@ -40,6 +40,15 @@ function getMonthEnd(filename: string): string | null {
   return null;
 }
 
+function todayLocal(): string {
+  const now = new Date();
+  return [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, "0"),
+    String(now.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
 export async function POST(req: NextRequest) {
   const session = await getSession();
   if (!session || session.role !== "admin") {
@@ -93,7 +102,7 @@ export async function POST(req: NextRequest) {
 
   // Read admin overlays from DB.
   // Non-listed: latest value per item_key up to today
-  const today = new Date().toISOString().split("T")[0];
+  const today = todayLocal();
   const nonListedRows = await query<{ value: string }>(
     `SELECT DISTINCT ON (mv.item_key) mv.value
      FROM admin_manual_values mv
@@ -149,7 +158,7 @@ export async function POST(req: NextRequest) {
       realized: Number(workbook.portfolioMetrics["Realized P&L"] ?? 0),
       netTotal: Number(workbook.portfolioMetrics["Net Total P&L"] ?? 0),
     },
-    directaCash: Number(workbook.portfolioMetrics["Directa Cash"] ?? 0),
+    directaCash: Number(workbook.portfolioMetrics["Statement Cash"] ?? workbook.portfolioMetrics["Directa Cash"] ?? 0),
     cutoffDate: formatDateOnly(workbook.cutoffDate),
     investorName: env.INVESTOR_NAME,
     portfolioId: env.PORTFOLIO_ID,
@@ -205,7 +214,7 @@ export async function POST(req: NextRequest) {
           cutoffDate: payload.cutoffDate,
           sourceFiles: newFilenames,
           storedFiles: storedFiles.map((file) => file.filename),
-          generatedFrom: "directa_csv_upload",
+          generatedFrom: "statement_csv_upload",
         }),
       ]
     );

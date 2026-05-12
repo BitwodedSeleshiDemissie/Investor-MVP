@@ -61,6 +61,14 @@ function pm(data: WorkbookData, ...keys: string[]): number {
   return 0;
 }
 
+function dateOnly(date: Date): string {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
 function classifyAsset(assetClass: string): "equity" | "bonds" | "alts" | "cash" | "other" {
   const ac = assetClass.toLowerCase();
   if (ac.includes("etf") || ac.includes("etc") || ac.includes("crypto") || ac.includes("alternative") || ac.includes("fund") || ac.includes("private")) return "alts";
@@ -85,7 +93,7 @@ export function computeKPIs(data: WorkbookData, settings: Settings): KPIs {
 
   const positiveDistributions = incomeRows.filter((r) => r.netAmount > 0);
   const distributions = positiveDistributions.sort((a, b) => b.date.getTime() - a.date.getTime());
-  const lastDate = distributions.length > 0 ? distributions[0].date.toISOString().split("T")[0] : null;
+  const lastDate = distributions.length > 0 ? dateOnly(distributions[0].date) : null;
 
   return {
     totalPortfolioValue: nav,
@@ -109,7 +117,7 @@ export function computeTimeseries(data: WorkbookData): NavPoint[] {
       ? (1 + r.cumulativeReturn) * 100
       : base > 0 ? (r.nav / base) * 100 : 100;
     return {
-      monthEnd: r.monthEnd.toISOString().split("T")[0],
+      monthEnd: dateOnly(r.monthEnd),
       nav: r.nav,
       normalized,
       monthlyReturn: r.monthlyReturn,
@@ -152,24 +160,28 @@ function normalizeAssetClass(raw: string): string {
 
 export function computeIRR(data: WorkbookData): IRRData {
   const nav = pm(data, "Total Portfolio Value", "NAV", "Portfolio Value");
-  const valuationDate = data.cutoffDate.toISOString().split("T")[0];
+  const valuationDate = dateOnly(data.cutoffDate);
+  const listedNav = pm(data, "Listed Market Value", "Listed Value", "Total Market Value (Holdings)");
+  const statementCash = pm(data, "Statement Cash", "Directa Cash", "Cash (Directa)", "Cash Balance (est.)");
+  const statementAccountTerminalValue = listedNav + statementCash;
+  const investorTerminalValue = statementAccountTerminalValue > 0 ? statementAccountTerminalValue : nav;
 
   let investorIrr: number | null = null;
   let fundIrr: number | null = null;
 
-  if (data.irrInvestor.length > 1) {
+  if (data.irrInvestor.length > 0) {
     const cfs = [
       ...data.irrInvestor.map((r) => ({ date: r.date, amount: r.cashFlow })),
-      { date: data.cutoffDate, amount: nav },
+      { date: data.cutoffDate, amount: investorTerminalValue },
     ];
     investorIrr = xirrSafe(cfs);
   }
 
-  if (data.irrPortfolio.length > 1) {
-    const listedNav = pm(data, "Listed Market Value", "Listed Value", "Total Portfolio Value");
+  if (data.irrPortfolio.length > 0) {
+    const portfolioTerminalValue = listedNav > 0 ? listedNav : nav;
     const cfs = [
       ...data.irrPortfolio.map((r) => ({ date: r.date, amount: r.cashFlow })),
-      { date: data.cutoffDate, amount: listedNav },
+      { date: data.cutoffDate, amount: portfolioTerminalValue },
     ];
     fundIrr = xirrSafe(cfs);
   }
@@ -238,7 +250,7 @@ export function computeDistributions(data: WorkbookData): DistributionEvent[] {
   return data.tradeLog
     .filter((r) => INCOME_TYPES.has(r.type))
     .map((r) => ({
-      date: r.date.toISOString().split("T")[0],
+      date: dateOnly(r.date),
       security: r.security,
       incomeType: r.type,
       amount: r.netAmount,
@@ -291,7 +303,7 @@ export function computeComposition(data: WorkbookData): PortfolioComposition {
     .filter((h) => h.shares > 0 && !["private", "non-listed", "unlisted"].some((s) => h.assetClass.toLowerCase().includes(s)))
     .reduce((s, h) => s + h.marketValue, 0);
   const nonListed = pm(data, "Non-Listed Total", "Non-Listed Value", "Private Equity Total", "Total Non-Listed");
-  const cash = pm(data, "Total Cash", "Cash Balance (est.)", "Directa Cash", "Cash", "Cash Total", "Liquidity");
+  const cash = pm(data, "Total Cash", "Cash Balance (est.)", "Statement Cash", "Directa Cash", "Cash", "Cash Total", "Liquidity");
   return { listed, nonListed, cash, total: listed + nonListed + cash };
 }
 

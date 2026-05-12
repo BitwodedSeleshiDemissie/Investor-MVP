@@ -122,7 +122,7 @@ async function main(): Promise<void> {
         realized: Number(workbook.portfolioMetrics["Realized P&L"] ?? 0),
         netTotal: Number(workbook.portfolioMetrics["Net Total P&L"] ?? 0),
       },
-      directaCash: Number(workbook.portfolioMetrics["Directa Cash"] ?? 0),
+      directaCash: Number(workbook.portfolioMetrics["Statement Cash"] ?? workbook.portfolioMetrics["Directa Cash"] ?? 0),
       cutoffDate,
       investorName: controlRows.rows[0]?.investor_name || previousPayload?.investorName || process.env.INVESTOR_NAME || "Investor",
       portfolioId: controlRows.rows[0]?.portfolio_id || previousPayload?.portfolioId || process.env.PORTFOLIO_ID || "AI-0042",

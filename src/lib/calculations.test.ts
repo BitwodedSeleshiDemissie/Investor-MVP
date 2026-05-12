@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   checkWarnings,
   computeKPIs,
+  computeIRR,
   computeRisk,
   computeTargets,
   computeTimeseries,
@@ -52,7 +53,9 @@ function makeWorkbook(overrides: Partial<{
       "Total Withdrawals": -30_000,
       "Net Capital Deployed": (overrides.capitalCommitted ?? 1_250_000) - 30_000,
       "Total Market Value (Holdings)": overrides.holdingsMv ?? 1_070_303.94,
+      "Listed Market Value": overrides.holdingsMv ?? 1_070_303.94,
       "Cash Balance (est.)": overrides.cash ?? 97_547.74,
+      "Statement Cash": overrides.cash ?? 97_547.74,
       "Total Portfolio Value": overrides.portfolioValue ?? 1_167_851.68,
       "Total Income (Div+Cpn+Dist)": overrides.totalIncome ?? 4_674.71,
       "Annualized Return (TWR)": 0.010104,
@@ -187,6 +190,22 @@ describe("computeTimeseries", () => {
 
   it("keeps the input month count", () => {
     expect(computeTimeseries(makeWorkbook())).toHaveLength(3);
+  });
+});
+
+describe("computeIRR", () => {
+  it("matches investor terminal value to statement-account cash flows", () => {
+    const data = makeWorkbook({
+      portfolioValue: 1_700,
+      holdingsMv: 1_100,
+      cash: 100,
+      irrInvestor: [{ date: d(2025, 3, 31), cashFlow: -1_200 }],
+    });
+
+    const irr = computeIRR(data);
+
+    expect(irr.investorIrr).not.toBeNull();
+    expect(irr.investorIrr!).toBeCloseTo(0, 2);
   });
 });
 

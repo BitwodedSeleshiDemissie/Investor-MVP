@@ -1,4 +1,4 @@
-// Ports preprocess.py: Directa CSV exports → WorkbookData (in-memory, no Excel round-trip).
+// Ports preprocess.py: statement CSV exports -> WorkbookData (in-memory, no Excel round-trip).
 // The resulting WorkbookData is fed directly into the existing calculations.ts functions.
 
 import type { WorkbookData, HoldingRow, CashFlowRow, MonthlyReturnRow } from "./excel-loader";
@@ -128,7 +128,7 @@ async function classifyWithClaude(unknowns: string[]): Promise<Record<string, Ti
   }
 
   const list = unknowns.map((s, i) => `${i + 1}. ${s}`).join("\n");
-  const prompt = `Classify each security name from an Italian brokerage (Ariete Capital / Directa) into exactly one category:
+  const prompt = `Classify each security name from Italian statement data into exactly one category:
 - Stock (individual listed company shares)
 - ETF/ETC (equity ETFs, physical commodity ETCs, broad-market index funds)
 - Crypto ETP (crypto exchange-traded products: Bitcoin, Ethereum, Solana)
@@ -677,9 +677,9 @@ export async function buildWorkbookData(
   const listedMarketValue = holdings.reduce((s, h) => s + h.marketValue, 0);
 
   // Step 5: cash
-  const directaCash = getCashAtCutoff(allRows, cutoff);
+  const statementCash = getCashAtCutoff(allRows, cutoff);
   const externalCash = overlays.externalCash;
-  const totalCash = directaCash + externalCash;
+  const totalCash = statementCash + externalCash;
 
   // Step 6: portfolio total
   const portfolioValue = listedMarketValue + overlays.nonListedValue + totalCash;
@@ -736,7 +736,7 @@ export async function buildWorkbookData(
     "Capital Committed": overlays.capitalCommitted,
     "Total Income (Div+Cpn+Dist)": totalIncome,
     "Total Cash": totalCash,
-    "Directa Cash": directaCash,
+    "Statement Cash": statementCash,
     "External Cash": externalCash,
     "Listed Market Value": listedMarketValue,
     "Non-Listed Value": overlays.nonListedValue,
