@@ -20,9 +20,10 @@ interface Settings {
   targetAltPct: number;
 }
 
-// Newton-Raphson XIRR implementation
-function xirr(cashflows: { date: Date; amount: number }[]): number | null {
+// Newton-Raphson XIRR implementation with light guardrails to match the Python portal.
+export function xirrSafe(cashflows: { date: Date; amount: number }[]): number | null {
   if (cashflows.length < 2) return null;
+  if (!cashflows.some((cf) => cf.amount < 0) || !cashflows.some((cf) => cf.amount > 0)) return null;
   const t0 = cashflows[0].date.getTime();
   const years = cashflows.map((cf) => (cf.date.getTime() - t0) / (365.25 * 24 * 3600 * 1000));
   const amounts = cashflows.map((cf) => cf.amount);
@@ -32,20 +33,22 @@ function xirr(cashflows: { date: Date; amount: number }[]): number | null {
   }
   function dnpv(rate: number): number {
     return amounts.reduce(
-      (acc, amt, i) => acc - (i * amt * years[i]) / Math.pow(1 + rate, years[i] + 1),
+      (acc, amt, i) => acc - (amt * years[i]) / Math.pow(1 + rate, years[i] + 1),
       0
     );
   }
 
-  let rate = 0.1;
-  for (let iter = 0; iter < 100; iter++) {
-    const f = npv(rate);
-    const df = dnpv(rate);
-    if (Math.abs(df) < 1e-12) break;
-    const newRate = rate - f / df;
-    if (Math.abs(newRate - rate) < 1e-8) return newRate;
-    rate = newRate;
-    if (rate < -0.9999) rate = -0.9999;
+  for (const guess of [0.1, -0.1, 0.25, -0.5, 0.5]) {
+    let rate = guess;
+    for (let iter = 0; iter < 100; iter++) {
+      const f = npv(rate);
+      const df = dnpv(rate);
+      if (!Number.isFinite(f) || !Number.isFinite(df) || Math.abs(df) < 1e-12) break;
+      const newRate = rate - f / df;
+      if (!Number.isFinite(newRate) || newRate <= -0.999999) break;
+      if (Math.abs(newRate - rate) < 1e-8) return newRate;
+      rate = newRate;
+    }
   }
   return null;
 }
@@ -72,16 +75,16 @@ export function computeKPIs(data: WorkbookData, settings: Settings): KPIs {
   const committed = pm(data, "Capital Committed", "Total Invested Capital", "Committed Capital");
 
   // Total income: use pre-computed Portfolio Metrics value if available, else sum trade log
-  const pmIncome = pm(data, "Total Income (Div+Cpn+Dist)", "Total Income", "Total Distributions");
   const incomeRows = data.tradeLog.filter((r) => INCOME_TYPES.has(r.type));
   const tradeLogIncome = incomeRows.reduce((s, r) => s + r.netAmount, 0);
-  const totalIncome = pmIncome > 0 ? pmIncome : Math.abs(tradeLogIncome);
+  const totalIncome = pm(data, "Total Income (Div+Cpn+Dist)", "Total Income", "Total Distributions");
 
   const pctSinceEntry = committed > 0 ? (nav - committed) / committed : 0;
   const moic = committed > 0 ? (nav + totalIncome) / committed : 0;
   const currentYield = nav > 0 ? totalIncome / nav : 0;
 
-  const distributions = incomeRows.sort((a, b) => b.date.getTime() - a.date.getTime());
+  const positiveDistributions = incomeRows.filter((r) => r.netAmount > 0);
+  const distributions = positiveDistributions.sort((a, b) => b.date.getTime() - a.date.getTime());
   const lastDate = distributions.length > 0 ? distributions[0].date.toISOString().split("T")[0] : null;
 
   return {
@@ -91,8 +94,8 @@ export function computeKPIs(data: WorkbookData, settings: Settings): KPIs {
     moic,
     moicTarget: settings.moicTarget,
     currentYield,
-    distributionsTotal: totalIncome,
-    distributionsCount: incomeRows.length,
+    distributionsTotal: tradeLogIncome,
+    distributionsCount: positiveDistributions.length,
     distributionsLastDate: lastDate,
     totalIncome,
   };
@@ -101,16 +104,14 @@ export function computeKPIs(data: WorkbookData, settings: Settings): KPIs {
 export function computeTimeseries(data: WorkbookData): NavPoint[] {
   if (data.monthlyReturns.length === 0) return [];
   const base = data.monthlyReturns[0].nav;
-  let cumReturn = 0;
   return data.monthlyReturns.map((r) => {
     const normalized = base > 0 ? (r.nav / base) * 100 : 100;
-    cumReturn = base > 0 ? (r.nav - base) / base : 0;
     return {
       monthEnd: r.monthEnd.toISOString().split("T")[0],
       nav: r.nav,
       normalized,
       monthlyReturn: r.monthlyReturn,
-      cumulativeReturn: cumReturn,
+      cumulativeReturn: r.cumulativeReturn ?? (base > 0 ? (r.nav - base) / base : 0),
     };
   });
 }
@@ -159,7 +160,7 @@ export function computeIRR(data: WorkbookData): IRRData {
       ...data.irrInvestor.map((r) => ({ date: r.date, amount: r.cashFlow })),
       { date: data.cutoffDate, amount: nav },
     ];
-    investorIrr = xirr(cfs);
+    investorIrr = xirrSafe(cfs);
   }
 
   if (data.irrPortfolio.length > 1) {
@@ -168,7 +169,7 @@ export function computeIRR(data: WorkbookData): IRRData {
       ...data.irrPortfolio.map((r) => ({ date: r.date, amount: r.cashFlow })),
       { date: data.cutoffDate, amount: listedNav },
     ];
-    fundIrr = xirr(cfs);
+    fundIrr = xirrSafe(cfs);
   }
 
   // Fall back to pre-computed values in portfolio metrics
@@ -197,6 +198,7 @@ export function computeRisk(data: WorkbookData, settings: Settings): RiskMetrics
       annualizedReturn: annReturn > 1 ? annReturn / 100 : annReturn,
       riskFreeRate: settings.riskFreeRate,
       dataWindowMonths: n,
+      betaVsMsciWorld: null,
     };
   }
 
@@ -205,14 +207,16 @@ export function computeRisk(data: WorkbookData, settings: Settings): RiskMetrics
   const volatilityAnnualized = Math.sqrt(variance * 12);
 
   const ar = annReturn > 1 ? annReturn / 100 : annReturn > 0 ? annReturn : mean * 12;
-  const sharpeRatio = volatilityAnnualized > 0 ? (ar - settings.riskFreeRate) / volatilityAnnualized : 0;
+  const sharpeRatio = volatilityAnnualized > 1e-12 ? (ar - settings.riskFreeRate) / volatilityAnnualized : 0;
 
-  // Max drawdown from NAV series
+  // Max drawdown from compounded time-weighted return index, as in the Python portal.
   let maxDrawdown = 0;
-  let peak = data.monthlyReturns[0]?.nav ?? 0;
+  let index = 1;
+  let peak = 1;
   for (const r of data.monthlyReturns) {
-    if (r.nav > peak) peak = r.nav;
-    const dd = peak > 0 ? (r.nav - peak) / peak : 0;
+    index *= 1 + r.monthlyReturn;
+    if (index > peak) peak = index;
+    const dd = peak > 0 ? index / peak - 1 : 0;
     if (dd < maxDrawdown) maxDrawdown = dd;
   }
 
@@ -223,6 +227,7 @@ export function computeRisk(data: WorkbookData, settings: Settings): RiskMetrics
     annualizedReturn: ar,
     riskFreeRate: settings.riskFreeRate,
     dataWindowMonths: n,
+    betaVsMsciWorld: null,
   };
 }
 
@@ -233,7 +238,7 @@ export function computeDistributions(data: WorkbookData): DistributionEvent[] {
       date: r.date.toISOString().split("T")[0],
       security: r.security,
       incomeType: r.type,
-      amount: Math.abs(r.netAmount),
+      amount: r.netAmount,
     }))
     .sort((a, b) => b.date.localeCompare(a.date));
 }
@@ -289,15 +294,15 @@ export function computeComposition(data: WorkbookData): PortfolioComposition {
 
 export function checkWarnings(data: WorkbookData, tolerance = 0.005): string[] {
   const warnings: string[] = [];
-  const nav = pm(data, "Total Portfolio Value", "NAV");
+  const reportedHoldings = pm(data, "Total Market Value (Holdings)");
   const holdingsTotal = data.holdings
     .filter((h) => h.shares > 0)
     .reduce((s, h) => s + h.marketValue, 0);
-  if (nav > 0 && holdingsTotal > 0) {
-    const diff = Math.abs(nav - holdingsTotal) / nav;
+  if (reportedHoldings > 0 && holdingsTotal > 0) {
+    const diff = Math.abs(reportedHoldings - holdingsTotal) / reportedHoldings;
     if (diff > tolerance) {
       warnings.push(
-        `NAV reconciliation gap: ${(diff * 100).toFixed(2)}% difference between holdings sum (${holdingsTotal.toFixed(0)}) and reported NAV (${nav.toFixed(0)})`
+        `NAV_RECONCILIATION_MISMATCH: ${(diff * 100).toFixed(2)}% difference between holdings sum (${holdingsTotal.toFixed(0)}) and reported holdings value (${reportedHoldings.toFixed(0)})`
       );
     }
   }

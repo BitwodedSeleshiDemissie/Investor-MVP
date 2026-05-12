@@ -19,13 +19,13 @@ const manualValueSchema = z.object({
   itemKey: z.string().min(1),
   displayName: z.string().min(1),
   valueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  value: z.number().positive(),
+  value: z.coerce.number().nonnegative(),
   holdingName: z.string().optional(),
 });
 
 const controlSchema = z.object({
   asOfDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  capitalCommitted: z.number().positive(),
+  capitalCommitted: z.coerce.number().nonnegative(),
 });
 
 export const saveDictionaryItem = adminAction
@@ -61,13 +61,21 @@ export const saveManualValue = adminAction
   .action(async ({ parsedInput }) => {
     if (!dbEnabled()) return { error: "Database not configured" };
     await initSchema();
+    const dictionary = await query<{ item_type: string }>(
+      `SELECT item_type FROM asset_dictionary WHERE item_key = $1 LIMIT 1`,
+      [parsedInput.itemKey]
+    );
+    const itemType = dictionary[0]?.item_type?.toLowerCase() ?? "";
+    const valuationMethod = itemType === "cash" ? "Monthly cash value" : "Monthly approved value";
+
     await query(
       `INSERT INTO admin_manual_values (as_of_date, item_key, value, currency, valuation_source, valuation_method, notes)
-       VALUES ($1, $2, $3, 'EUR', 'Admin input', '', $4)`,
+       VALUES ($1, $2, $3, 'EUR', 'Admin input', $4, $5)`,
       [
         parsedInput.valueDate,
         parsedInput.itemKey,
         parsedInput.value,
+        valuationMethod,
         parsedInput.holdingName ?? "",
       ]
     );
@@ -81,7 +89,7 @@ export const saveControl = adminAction
     await initSchema();
     await query(
       `INSERT INTO admin_controls (portfolio_id, investor_name, as_of_date, capital_committed, currency, notes)
-       VALUES ($1, $2, $3, $4, 'EUR', '')`,
+       VALUES ($1, $2, $3, $4, 'EUR', 'Admin-entered official capital commitment')`,
       [env.PORTFOLIO_ID, env.INVESTOR_NAME, parsedInput.asOfDate, parsedInput.capitalCommitted]
     );
     return { success: true };

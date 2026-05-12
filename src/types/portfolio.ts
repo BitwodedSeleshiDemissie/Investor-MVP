@@ -38,6 +38,7 @@ export interface RiskMetrics {
   annualizedReturn: number;
   riskFreeRate: number;
   dataWindowMonths: number;
+  betaVsMsciWorld: number | null;
 }
 
 export interface DistributionEvent {

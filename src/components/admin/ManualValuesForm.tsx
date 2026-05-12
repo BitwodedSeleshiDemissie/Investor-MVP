@@ -11,7 +11,7 @@ const schema = z.object({
   itemKey: z.string().min(1),
   displayName: z.string().min(1),
   valueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  value: z.coerce.number().positive(),
+  value: z.coerce.number().nonnegative(),
   holdingName: z.string().optional(),
 });
 

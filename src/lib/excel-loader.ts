@@ -46,6 +46,7 @@ export interface MonthlyReturnRow {
   monthEnd: Date;
   nav: number;
   monthlyReturn: number;
+  cumulativeReturn?: number;
 }
 
 export const INCOME_TYPES = new Set(["Dividend", "Coupon", "Distribution", "Sec. Lending", "Income"]);
@@ -242,6 +243,7 @@ export function loadWorkbook(filePath: string): WorkbookData {
         monthEnd: d,
         nav,
         monthlyReturn: toNum(row[4]),
+        cumulativeReturn: toNum(row[5]),
       });
     }
     monthlyReturns.sort((a, b) => a.monthEnd.getTime() - b.monthEnd.getTime());

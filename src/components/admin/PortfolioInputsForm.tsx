@@ -10,7 +10,7 @@ import { formatEur, formatDate } from "@/lib/utils";
 
 const schema = z.object({
   asOfDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  capitalCommitted: z.coerce.number().positive(),
+  capitalCommitted: z.coerce.number().nonnegative(),
 });
 
 type FormValues = z.infer<typeof schema>;
