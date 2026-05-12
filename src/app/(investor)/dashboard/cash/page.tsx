@@ -17,7 +17,7 @@ export default async function CashPage() {
 
   const rows: Array<{ label: string; sublabel: string; value: number; source: string }> = [];
   if (directa > 0) {
-    rows.push({ label: "Directa Cash", sublabel: "Liquidity balance on Directa account", value: directa, source: "Directa/Vasco (reconstructed)" });
+    rows.push({ label: "Statement Cash", sublabel: "Liquidity balance from statement data", value: directa, source: "Statement data" });
   }
   if (cashRows.length > 0) {
     cashRows.forEach((r) => {
@@ -66,11 +66,11 @@ export default async function CashPage() {
 
         <div className="sm:col-span-2 grid grid-cols-2 gap-4">
           <div className="rounded-2xl border border-border/60 p-5 bg-secondary/20">
-            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-3">Directa Cash</p>
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-3">Statement Cash</p>
             <p className="font-numeric text-3xl font-bold text-foreground leading-none">
               {formatEur(directa)}
             </p>
-            <p className="text-xs text-muted-foreground mt-2">Liquidity on Directa/Vasco account</p>
+            <p className="text-xs text-muted-foreground mt-2">Liquidity from statement data</p>
             {totalCash > 0 && (
               <div className="mt-3 flex items-center gap-2">
                 <div className="flex-1 h-1.5 rounded-full bg-secondary/60 overflow-hidden">

@@ -3,6 +3,7 @@ import {
   checkWarnings,
   computeKPIs,
   computeRisk,
+  computeTargets,
   computeTimeseries,
   xirrSafe,
 } from "./calculations";
@@ -172,12 +173,16 @@ describe("computeKPIs", () => {
 });
 
 describe("computeTimeseries", () => {
-  it("normalizes the first point to 100", () => {
-    expect(computeTimeseries(makeWorkbook())[0].normalized).toBeCloseTo(100);
+  it("builds a TWR index from cumulative return", () => {
+    const rows = [
+      monthlyRow(d(2025, 1, 31), 100, 0, 0),
+      monthlyRow(d(2025, 2, 28), 1_000, 0.1, 0.1),
+    ];
+    expect(computeTimeseries(makeWorkbook({ monthlyReturns: rows }))[1].normalized).toBeCloseTo(110);
   });
 
-  it("normalizes subsequent points from first NAV", () => {
-    expect(computeTimeseries(makeWorkbook())[1].normalized).toBeCloseTo((9_509.36 / 9_246.42) * 100, 4);
+  it("normalizes the first point to 100", () => {
+    expect(computeTimeseries(makeWorkbook())[0].normalized).toBeCloseTo(100);
   });
 
   it("keeps the input month count", () => {
@@ -223,6 +228,26 @@ describe("max drawdown formula", () => {
       return nav / peak - 1;
     });
     expect(Math.min(...drawdowns)).toBeCloseTo(-0.25, 4);
+  });
+});
+
+describe("computeTargets", () => {
+  it("matches the Python target buckets: stocks as equity, ETFs and crypto as alternatives", () => {
+    const holdings = [
+      holdingRow("STOCK", "Stock", 700),
+      holdingRow("BOND", "Bond", 200),
+      holdingRow("ETF", "ETF/ETC", 50),
+      holdingRow("BTC ETP", "Crypto ETP", 50),
+    ];
+
+    const targets = computeTargets(
+      makeWorkbook({ portfolioValue: 1_000, cash: 0, holdings }),
+      settings
+    );
+
+    expect(targets.currentEquityPct).toBeCloseTo(0.7);
+    expect(targets.currentBondPct).toBeCloseTo(0.2);
+    expect(targets.currentAltPct).toBeCloseTo(0.1);
   });
 });
 

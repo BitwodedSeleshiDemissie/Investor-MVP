@@ -12,19 +12,14 @@ interface HeaderProps {
 
 export function Header({ role, investorName, portfolioId }: HeaderProps) {
   return (
-    <header className="border-b border-border/60 bg-card/80 backdrop-blur-xl sticky top-0 z-50"
-      style={{ boxShadow: "0 1px 0 hsl(210 25% 96% / 0.04)" }}>
+    <header
+      className="border-b border-border/60 bg-card/80 backdrop-blur-xl sticky top-0 z-50"
+      style={{ boxShadow: "0 1px 0 hsl(210 25% 96% / 0.04)" }}
+    >
       <div className="w-full px-5 sm:px-7 h-14 flex items-center justify-between">
-
         {/* Logo */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center justify-center w-8 h-8 rounded-xl bg-gradient-gold shadow-gold shrink-0">
-            <span className="text-sm font-bold text-white tracking-tight">A</span>
-          </div>
-          <div className="hidden sm:block">
-            <span className="text-sm font-semibold text-foreground tracking-tight">Ariete Invest</span>
-            <span className="text-muted-foreground text-sm"> · Investor Portal</span>
-          </div>
+        <div className="flex items-center">
+          <img src="/icon.png" alt="Ariete" className="h-8 w-8 rounded-xl object-cover shadow-gold" />
         </div>
 
         {/* Right */}

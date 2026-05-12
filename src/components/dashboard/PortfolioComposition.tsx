@@ -4,7 +4,7 @@ import { formatEur } from "@/lib/utils";
 const SLICES = [
   { key: "listed",    label: "Listed / Market-Priced",   color: "hsl(26 90% 54%)",   bg: "bg-primary/10",   text: "text-primary" },
   { key: "nonListed", label: "Non-Listed / Approved",    color: "hsl(150 60% 40%)",  bg: "bg-success/10",   text: "text-success" },
-  { key: "cash",      label: "Cash (Directa + External)", color: "hsl(217 91% 62%)",  bg: "bg-blue-500/10",  text: "text-blue-400" },
+  { key: "cash",      label: "Cash & Liquidity",          color: "hsl(217 91% 62%)",  bg: "bg-blue-500/10",  text: "text-blue-400" },
 ] as const;
 
 export function PortfolioCompositionBlock({ composition }: { composition: PortfolioComposition }) {

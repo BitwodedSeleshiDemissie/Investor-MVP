@@ -69,7 +69,7 @@ export default function UploadSnapshotPage() {
         <div>
           <h1 className="text-xl font-bold text-foreground tracking-tight">Upload Monthly Report</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Upload Directa statement CSVs - new files are stored and merged with existing history
+            Upload statement CSVs - new files are stored and merged with existing history
           </p>
         </div>
       </div>
@@ -80,7 +80,7 @@ export default function UploadSnapshotPage() {
         style={{ background: "hsl(var(--card))", boxShadow: "var(--shadow-card)" }}
       >
         <p className="font-semibold text-foreground text-sm mb-2">How this works</p>
-        <p>- Each month, upload the new <span className="font-mono text-xs bg-secondary/60 px-1 rounded">Estratto Conto YYYY-MM-DD.csv</span> from Directa.</p>
+        <p>- Each month, upload the new <span className="font-mono text-xs bg-secondary/60 px-1 rounded">Estratto Conto YYYY-MM-DD.csv</span> statement file.</p>
         <p>- Previously uploaded files are stored, so you only need to add new ones each month.</p>
         <p>- The app processes the full accumulated history and writes a new portfolio snapshot.</p>
         <p>- It also stores a downloadable audit workbook for that snapshot.</p>
@@ -155,7 +155,7 @@ export default function UploadSnapshotPage() {
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             {[
               { label: "Portfolio value", value: formatEur(result.portfolioValue) },
-              { label: "Directa cash", value: formatEur(result.directaCash) },
+              { label: "Statement cash", value: formatEur(result.directaCash) },
               { label: "Open positions", value: String(result.holdingsCount) },
               { label: "CSV files stored", value: String(result.filesStored) },
             ].map(({ label, value }) => (

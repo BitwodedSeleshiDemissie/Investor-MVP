@@ -63,9 +63,9 @@ function pm(data: WorkbookData, ...keys: string[]): number {
 
 function classifyAsset(assetClass: string): "equity" | "bonds" | "alts" | "cash" | "other" {
   const ac = assetClass.toLowerCase();
-  if (ac.includes("stock") || ac.includes("equity") || ac.includes("etf") || ac.includes("etc")) return "equity";
+  if (ac.includes("etf") || ac.includes("etc") || ac.includes("crypto") || ac.includes("alternative") || ac.includes("fund") || ac.includes("private")) return "alts";
+  if (ac.includes("stock") || ac.includes("equity")) return "equity";
   if (ac.includes("bond") || ac.includes("fixed") || ac.includes("coupon")) return "bonds";
-  if (ac.includes("crypto") || ac.includes("alternative") || ac.includes("real estate") || ac.includes("fund")) return "alts";
   if (ac.includes("cash") || ac.includes("liquidity")) return "cash";
   return "other";
 }
@@ -105,7 +105,9 @@ export function computeTimeseries(data: WorkbookData): NavPoint[] {
   if (data.monthlyReturns.length === 0) return [];
   const base = data.monthlyReturns[0].nav;
   return data.monthlyReturns.map((r) => {
-    const normalized = base > 0 ? (r.nav / base) * 100 : 100;
+    const normalized = r.cumulativeReturn !== undefined
+      ? (1 + r.cumulativeReturn) * 100
+      : base > 0 ? (r.nav / base) * 100 : 100;
     return {
       monthEnd: r.monthEnd.toISOString().split("T")[0],
       nav: r.nav,
@@ -178,7 +180,7 @@ export function computeIRR(data: WorkbookData): IRRData {
     if (v !== 0) investorIrr = v > 1 ? v / 100 : v;
   }
   if (fundIrr === null) {
-    const v = pm(data, "Fund IRR", "Portfolio IRR", "IRR Fund");
+    const v = pm(data, "Fund IRR", "Portfolio IRR", "Company IRR", "IRR Fund");
     if (v !== 0) fundIrr = v > 1 ? v / 100 : v;
   }
 
@@ -207,7 +209,8 @@ export function computeRisk(data: WorkbookData, settings: Settings): RiskMetrics
   const volatilityAnnualized = Math.sqrt(variance * 12);
 
   const ar = annReturn > 1 ? annReturn / 100 : annReturn > 0 ? annReturn : mean * 12;
-  const sharpeRatio = volatilityAnnualized > 1e-12 ? (ar - settings.riskFreeRate) / volatilityAnnualized : 0;
+  const riskFreeRate = pm(data, "Risk-Free Rate (annual)") || settings.riskFreeRate;
+  const sharpeRatio = volatilityAnnualized > 1e-12 ? (ar - riskFreeRate) / volatilityAnnualized : 0;
 
   // Max drawdown from compounded time-weighted return index, as in the Python portal.
   let maxDrawdown = 0;
@@ -225,7 +228,7 @@ export function computeRisk(data: WorkbookData, settings: Settings): RiskMetrics
     volatilityAnnualized,
     maxDrawdown,
     annualizedReturn: ar,
-    riskFreeRate: settings.riskFreeRate,
+    riskFreeRate,
     dataWindowMonths: n,
     betaVsMsciWorld: null,
   };

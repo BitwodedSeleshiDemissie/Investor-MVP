@@ -174,7 +174,7 @@ export async function POST(req: NextRequest) {
     )
   `);
 
-  const auditFileName = `ariete-directa-audit-${payload.cutoffDate}.xlsx`;
+  const auditFileName = `ariete-statement-audit-${payload.cutoffDate}.xlsx`;
   const auditWorkbook = buildAuditWorkbookBuffer(workbook);
   const pool = getPool();
   if (!pool) {

@@ -16,7 +16,10 @@ function setColumnWidths(sheet: XLSX.WorkSheet, widths: number[]): void {
 export function buildAuditWorkbookBuffer(workbook: WorkbookData): Buffer {
   const audit = XLSX.utils.book_new();
 
-  const metricEntries = Object.entries(workbook.portfolioMetrics);
+  const metricEntries = Object.entries(workbook.portfolioMetrics).map(([key, value]) => [
+    key === "Directa Cash" ? "Statement Cash" : key,
+    value,
+  ]);
   const metricRows: unknown[][] = [["Metric", "Value", "", "Metric", "Value"]];
   const midpoint = Math.ceil(metricEntries.length / 2);
   for (let i = 0; i < midpoint; i++) {

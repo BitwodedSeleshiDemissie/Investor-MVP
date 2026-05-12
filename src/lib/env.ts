@@ -6,7 +6,7 @@ export const env = createEnv({
     JWT_SECRET: z.string().min(16),
     INVESTOR_PASSWORD: z.string().min(1),
     ADMIN_PASSWORD: z.string().min(1),
-    INVESTOR_NAME: z.string().default("Vasco Varo"),
+    INVESTOR_NAME: z.string().default("Investor"),
     PORTFOLIO_ID: z.string().default("AI-0042"),
     RISK_FREE_RATE: z.coerce.number().default(0.035),
     MOIC_TARGET: z.coerce.number().default(2.0),

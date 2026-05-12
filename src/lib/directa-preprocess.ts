@@ -438,7 +438,7 @@ function computeHoldingsFromRows(tradeRows: RawRow[], priceMap: Map<string, numb
     const tipo = secRows[secRows.length - 1].tipo;
     let adjPrice = currentPrice;
     if (tipo === "Bond" && currentPrice > 10 && Math.abs(shares) > 1000) {
-      adjPrice = currentPrice / 1000;
+      adjPrice = currentPrice / 100;
     }
 
     const marketValue = shares * adjPrice;
@@ -490,7 +490,7 @@ export function getCashAtCutoff(rows: RawRow[], cutoff: Date): number {
 function computeMonthlyReturnsFromRows(
   rows: RawRow[],
   cutoff: Date,
-  portfolioValue: number
+  positionPrices: Map<string, number>
 ): MonthlyReturnRow[] {
   // Collect unique month-end dates from Balance rows, keyed by ISO date string to avoid duplicates.
   const meMap = new Map<string, Date>();
@@ -510,7 +510,7 @@ function computeMonthlyReturnsFromRows(
     const meKey = `${me.getFullYear()}-${me.getMonth()}-${me.getDate()}`;
     const isCurrentMonth =
       me.getFullYear() === cutoff.getFullYear() && me.getMonth() === cutoff.getMonth();
-    const value = isCurrentMonth ? portfolioValue : getCashAtCutoff(rows, me);
+    const value = getAccountValueAtCutoff(rows, me, isCurrentMonth ? positionPrices : undefined);
 
     const rowMonthKey = (r: RawRow) => {
       const m = monthEnd(r.date);
@@ -525,7 +525,7 @@ function computeMonthlyReturnsFromRows(
 
     let monthlyReturn = 0;
     if (prevValue !== null && prevValue !== 0) {
-      monthlyReturn = value / (prevValue + deposits + withdrawals) - 1;
+      monthlyReturn = (value - deposits - withdrawals) / prevValue - 1;
     }
     cumulative = prevValue === null ? monthlyReturn : (1 + cumulative) * (1 + monthlyReturn) - 1;
 
@@ -539,6 +539,72 @@ function computeMonthlyReturnsFromRows(
   }
 
   return result;
+}
+
+function getAccountValueAtCutoff(
+  rows: RawRow[],
+  cutoff: Date,
+  positionPrices?: Map<string, number>
+): number {
+  const cash = getCashAtCutoff(rows, cutoff);
+  const bySecurity = new Map<string, { shares: number; price: number; tipo: Tipo | null }>();
+
+  for (const r of rows) {
+    if (r.date > cutoff || !r.security || !["Buy", "Sell", "Redemption"].includes(r.type)) continue;
+    const current = bySecurity.get(r.security) ?? { shares: 0, price: 0, tipo: null };
+    current.tipo = r.tipo ?? current.tipo;
+    const rowPrice = val(r.price);
+    if (rowPrice > 0) current.price = rowPrice;
+    if (r.type === "Redemption") {
+      const redeemedQuantity = Math.abs(val(r.quantity));
+      current.shares = redeemedQuantity > 0 ? current.shares - redeemedQuantity : 0;
+      bySecurity.set(r.security, current);
+      continue;
+    }
+    current.shares += val(r.quantity);
+    bySecurity.set(r.security, current);
+  }
+
+  let holdingsValue = 0;
+  for (const [security, position] of bySecurity) {
+    if (position.shares <= 0) continue;
+    let price = positionPrices?.get(security) ?? position.price;
+    if (position.tipo === "Bond" && price > 10 && Math.abs(position.shares) > 1000) {
+      price = price / 100;
+    }
+    holdingsValue += position.shares * price;
+  }
+
+  return Math.round((cash + holdingsValue) * 1e6) / 1e6;
+}
+
+function computeRealizedPnlFromRows(tradeRows: RawRow[]): number {
+  const groups = new Map<string, RawRow[]>();
+  for (const r of tradeRows) {
+    if (!["Buy", "Sell", "Redemption"].includes(r.type) || !r.security) continue;
+    if (!groups.has(r.security)) groups.set(r.security, []);
+    groups.get(r.security)!.push(r);
+  }
+
+  let realized = 0;
+  for (const secRows of groups.values()) {
+    const buyRows = secRows.filter((r) => r.type === "Buy");
+    const buyQty = buyRows.reduce((s, r) => s + val(r.quantity), 0);
+    if (buyQty <= 0) continue;
+
+    const buyCost = -buyRows.reduce((s, r) => s + val(r.amount), 0);
+    const avgCost = buyCost / buyQty;
+
+    for (const r of secRows) {
+      if (!["Sell", "Redemption"].includes(r.type)) continue;
+      const soldQty = Math.abs(val(r.quantity));
+      if (soldQty <= 0) continue;
+      const proceeds = val(r.amount) + val(r.commission);
+      realized += proceeds - soldQty * avgCost;
+    }
+  }
+
+  return Math.round(realized * 1e6) / 1e6;
 }
 
 // Builds investor IRR cash flows (deposits/withdrawals, negated: deposits → negative from investor view)
@@ -622,15 +688,17 @@ export async function buildWorkbookData(
   const dividends = tradeRows.filter((r) => r.type === "Dividend").reduce((s, r) => s + val(r.amount) + val(r.commission), 0);
   const coupons = tradeRows.filter((r) => r.type === "Coupon").reduce((s, r) => s + val(r.amount) + val(r.commission), 0);
   const distributions = tradeRows.filter((r) => r.type === "Distribution").reduce((s, r) => s + val(r.amount) + val(r.commission), 0);
-  const totalIncome = dividends + coupons + distributions;
+  const lending = tradeRows.filter((r) => r.type === "Sec. Lending").reduce((s, r) => s + val(r.amount) + val(r.commission), 0);
+  const totalIncome = dividends + coupons + distributions + lending;
 
   const invested = tradeRows.filter((r) => r.type === "Deposit").reduce((s, r) => s + val(r.amount), 0);
   const withdrawals = Math.abs(tradeRows.filter((r) => r.type === "Withdrawal").reduce((s, r) => s + val(r.amount), 0));
   const unrealizedPnl = holdings.reduce((s, h) => s + h.unrealizedPnl, 0);
+  const realizedPnl = computeRealizedPnlFromRows(tradeRows);
   const netPnl = portfolioValue + withdrawals - invested;
 
   // Step 8: monthly returns
-  const monthlyReturns = computeMonthlyReturnsFromRows(allRows, cutoff, portfolioValue);
+  const monthlyReturns = computeMonthlyReturnsFromRows(allRows, cutoff, positionPrices);
 
   // Step 9: annualized return for portfolioMetrics fallback
   const rets = monthlyReturns.map((r) => r.monthlyReturn);
@@ -673,7 +741,7 @@ export async function buildWorkbookData(
     "Listed Market Value": listedMarketValue,
     "Non-Listed Value": overlays.nonListedValue,
     "Unrealized P&L": unrealizedPnl,
-    "Realized P&L": 0,
+    "Realized P&L": realizedPnl,
     "Net Total P&L": netPnl,
     "Annualized Return (TWR)": annualizedReturn,
     "Total Market Value (Holdings)": listedMarketValue,

@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { buildAuditWorkbookBuffer } from "./audit-workbook";
-import { computeComposition, computeKPIs } from "./calculations";
+import { computeComposition, computeKPIs, computeRisk } from "./calculations";
 import { loadWorkbook } from "./excel-loader";
 
 const marchStatement = `"Ariete Capital S.r.l.";2/04/2026;18:46:57
@@ -94,6 +94,7 @@ describe("Directa preprocessing MVP flow", () => {
     expect(kpis.totalPortfolioValue).toBeCloseTo(18_203, 6);
     expect(kpis.capitalCommitted).toBe(100_000);
     expect(kpis.totalIncome).toBeCloseTo(30, 6);
+    expect(workbook.portfolioMetrics["Realized P&L"]).toBeCloseTo(38, 6);
     expect(composition).toEqual({
       listed: 940,
       nonListed: 5_000,
@@ -113,5 +114,74 @@ describe("Directa preprocessing MVP flow", () => {
     expect(reloaded.holdings).toHaveLength(2);
     expect(reloaded.tradeLog.some((row) => row.security === "ENEL" && row.type === "Sell")).toBe(true);
     expect(reloaded.monthlyReturns).toHaveLength(2);
+
+    const risk = computeRisk(workbook, settings);
+    expect(risk.annualizedReturn).toBeLessThan(1);
+    expect(risk.volatilityAnnualized).toBeLessThan(1);
+  });
+
+  it("values nominal bond quantities using quoted percent prices", async () => {
+    const { buildWorkbookData } = await import("./directa-preprocess");
+
+    const statement = `"Ariete Capital S.r.l.";1/02/2026;10:00:00
+"Estratto Conto   dal";1/01/2026;"al";31/01/2026
+
+"data";"valuta";"titolo";"riferim.";"Prezzo";;"quantita'";"importo EUR";"comm."
+1/01/2026;;"Saldo Iniziale";"";;;;100000,00;
+10/01/2026;12/01/2026;"BOT ZC DEC25 A EUR";"V0001";99,50000;EUR;100000;-99500,00;
+`;
+
+    const positions = `"Ariete Capital S.r.l.";1/02/2026;10:01:00;;;;;;;;;;""
+"titolo";;data;"Ora";"valuta";"protocollo/ordine";"quantita' ordine";"quantita'";"Prezzo";"Div";"Prezzo";"Cambio";"imp. EUR";"operazione";""
+"BOT";"BOT ZC DEC25 A EUR";;;;"Saldo finale";;100000;99,70000;EUR;;;99700,00;;;;;
+`;
+
+    const workbook = await buildWorkbookData(
+      [
+        { name: "Estratto Conto 2026-01-31.csv", content: statement },
+        { name: "Ec_X_1_02_2026.csv", content: positions },
+      ],
+      { nonListedValue: 0, externalCash: 0, capitalCommitted: 100_000 }
+    );
+
+    const bond = workbook.holdings.find((h) => h.security === "BOT ZC DEC25 A EUR");
+    expect(bond).toMatchObject({
+      assetClass: "Bond",
+      shares: 100_000,
+      currentPrice: 0.997,
+      marketValue: 99_700,
+      unrealizedPnl: 200,
+    });
+  });
+
+  it("removes redeemed securities from the monthly NAV series", async () => {
+    const { buildWorkbookData } = await import("./directa-preprocess");
+
+    const january = `"Ariete Capital S.r.l.";1/02/2026;10:00:00
+"Estratto Conto   dal";1/01/2026;"al";31/01/2026
+
+"data";"valuta";"titolo";"riferim.";"Prezzo";;"quantita'";"importo EUR";"comm."
+1/01/2026;;"Saldo Iniziale";"";;;;100000,00;
+10/01/2026;12/01/2026;"BOT ZC DEC25 A EUR";"V0001";99,50000;EUR;100000;-99500,00;
+`;
+
+    const february = `"Ariete Capital S.r.l.";1/03/2026;10:00:00
+"Estratto Conto   dal";1/02/2026;"al";28/02/2026
+
+"data";"valuta";"titolo";"riferim.";"Prezzo";;"quantita'";"importo EUR";"comm."
+1/02/2026;;"Saldo Iniziale";"";;;;500,00;
+20/02/2026;20/02/2026;"BOT ZC DEC25 A EUR";"Rimborso obbl.";;;;99700,00;
+`;
+
+    const workbook = await buildWorkbookData(
+      [
+        { name: "Estratto Conto 2026-01-31.csv", content: january },
+        { name: "Estratto Conto 2026-02-28.csv", content: february },
+      ],
+      { nonListedValue: 0, externalCash: 0, capitalCommitted: 100_000 }
+    );
+
+    expect(workbook.holdings.find((h) => h.security === "BOT ZC DEC25 A EUR")?.shares).toBe(0);
+    expect(workbook.monthlyReturns.at(-1)?.nav).toBeCloseTo(100_200, 6);
   });
 });

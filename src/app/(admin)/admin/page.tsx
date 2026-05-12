@@ -32,7 +32,7 @@ export default async function AdminPage() {
       href: "/admin/upload",
       icon: Upload,
       title: "Upload Monthly Report",
-      description: "Upload Directa CSVs & generate snapshot",
+      description: "Upload statement CSVs & generate snapshot",
       stat: "Upload new month",
       color: "text-emerald-400",
       bgColor: "bg-emerald-500/10",
