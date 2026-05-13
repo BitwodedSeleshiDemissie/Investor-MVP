@@ -136,12 +136,12 @@ async function overlayAdminValues(snapshot: PortfolioSnapshot): Promise<Portfoli
 
 export async function getPortfolioSnapshot(): Promise<PortfolioSnapshot> {
   if (!dbEnabled()) {
-    throw new Error("Database not configured. Set DATABASE_URL to read the Render portfolio data.");
+    throw new Error("Database not configured. Set DATABASE_URL to read the portfolio snapshot data.");
   }
 
   const row = await readLatestSnapshot();
   if (!row) {
-    throw new Error("No preprocessed portfolio snapshot found in Render. Import the latest monthly report first.");
+    throw new Error("No preprocessed portfolio snapshot found in the database. Import the latest monthly report first.");
   }
 
   const snapshot = row.payload;

@@ -48,7 +48,7 @@ async function ensureSnapshotTable(pool: Pool): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  loadDotEnv(path.resolve(process.cwd(), ".env.local"));
+  loadDotEnv(path.resolve(process.cwd(), ".env"));
 
   const workbookPath = process.argv[2];
   if (!workbookPath) {

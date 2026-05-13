@@ -51,8 +51,6 @@ function dateOnly(date: Date): string {
 describe("Statement preprocessing MVP flow", () => {
   beforeAll(() => {
     vi.stubEnv("JWT_SECRET", "test-secret-at-least-sixteen-chars");
-    vi.stubEnv("INVESTOR_PASSWORD", "usertest");
-    vi.stubEnv("ADMIN_PASSWORD", "admintest");
     vi.stubEnv("DATABASE_URL", "");
     vi.stubEnv("DATABASE_SSL", "false");
   });

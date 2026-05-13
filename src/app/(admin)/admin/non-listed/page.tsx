@@ -77,7 +77,7 @@ export default async function AdminNonListedPage() {
               <div className="py-8 text-center">
                 <Building2 className="w-10 h-10 text-muted-foreground/20 mx-auto mb-3" />
                 <p className="text-sm text-muted-foreground">Database not configured</p>
-                <p className="text-xs text-muted-foreground/60 mt-1">Add DATABASE_URL in .env.local.</p>
+                <p className="text-xs text-muted-foreground/60 mt-1">Add DATABASE_URL in .env.</p>
               </div>
             ) : (
               <ManualValuesForm items={dictionary} />

@@ -22,7 +22,7 @@ const testDate = "2099-01-27";
 const controlValue = 987_654.32;
 
 test.describe.configure({ mode: "serial" });
-test.skip(!databaseUrl, "E2E needs DATABASE_URL in env/.env.local");
+test.skip(!databaseUrl, "E2E needs DATABASE_URL in env/.env");
 
 test.beforeAll(async () => {
   await cleanup();
@@ -168,7 +168,7 @@ async function cleanup() {
 }
 
 function loadLocalEnv(): Env {
-  const file = path.join(process.cwd(), ".env.local");
+  const file = path.join(process.cwd(), ".env");
   if (!fs.existsSync(file)) return {};
   return fs
     .readFileSync(file, "utf8")

@@ -31,9 +31,9 @@ export default async function CashPage() {
   } else if (externalFromComposition > 0 && directa > 0) {
     rows.push({
       label: "External Cash",
-      sublabel: "External liquidity from Render",
+      sublabel: "External liquidity from admin-entered balances",
       value: externalFromComposition,
-      source: "Render admin values",
+      source: "Admin-entered balances",
     });
   }
 
@@ -59,7 +59,7 @@ export default async function CashPage() {
               <Wallet className="w-4 h-4 text-blue-400" />
             </div>
             <p className="text-xs text-muted-foreground">
-              {rows.length > 0 ? `${rows.length} accounts` : "No Render values entered yet"}
+              {rows.length > 0 ? `${rows.length} accounts` : "No external balances entered yet"}
             </p>
           </div>
         </div>
@@ -110,7 +110,7 @@ export default async function CashPage() {
           <Database className="w-4 h-4 text-warning shrink-0 mt-0.5" />
           <div>
             <p className="font-semibold text-warning">Database not configured</p>
-            <p className="text-muted-foreground text-xs mt-0.5">Configure DATABASE_URL to read monthly balances from Render.</p>
+            <p className="text-muted-foreground text-xs mt-0.5">Configure DATABASE_URL to read monthly balances from the shared database.</p>
           </div>
         </div>
       )}

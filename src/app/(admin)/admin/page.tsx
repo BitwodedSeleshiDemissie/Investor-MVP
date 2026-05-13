@@ -106,7 +106,7 @@ export default async function AdminPage() {
           <p className="text-xs mt-0.5 opacity-80">
             {isDbEnabled
               ? "All data entry modules are active."
-              : "Add DATABASE_URL in .env.local to enable admin data saving."}
+              : "Add DATABASE_URL in .env to enable admin data saving."}
           </p>
         </div>
       </div>

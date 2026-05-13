@@ -22,7 +22,7 @@ function envNumber(name: string, fallback: number): number {
 }
 
 async function main(): Promise<void> {
-  loadDotEnv(path.resolve(process.cwd(), ".env.local"));
+  loadDotEnv(path.resolve(process.cwd(), ".env"));
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
 
   const { buildWorkbookData, formatDateOnly } = await import("../src/lib/directa-preprocess");

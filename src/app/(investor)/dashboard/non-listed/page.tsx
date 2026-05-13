@@ -28,7 +28,7 @@ export default async function NonListedPage() {
           <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-widest mb-3">Total Non-Listed</p>
           <p className="font-numeric text-5xl font-bold text-foreground leading-none">{formatEur(total)}</p>
           <p className="text-xs text-muted-foreground mt-2">
-            {rows.length > 0 ? `${rows.length} assets - last admin valuation` : "No Render values entered yet"}
+            {rows.length > 0 ? `${rows.length} assets - last admin valuation` : "No admin values entered yet"}
           </p>
         </div>
         <div className="p-4 rounded-xl bg-purple-500/10 border border-purple-500/20">
@@ -43,8 +43,8 @@ export default async function NonListedPage() {
           <div>
             <p className="font-semibold text-warning">Database not configured</p>
             <p className="text-muted-foreground text-xs mt-0.5">
-              Configure DATABASE_URL in .env.local and use the Admin panel to enter monthly values.
-              The total shown comes from Render once values are entered.
+              Configure DATABASE_URL in .env and use the Admin panel to enter monthly values.
+              The total shown comes from the shared database once values are entered.
             </p>
           </div>
         </div>

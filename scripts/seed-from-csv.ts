@@ -146,7 +146,7 @@ async function ensureSchema(client: PoolClient): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  loadDotEnv(path.resolve(process.cwd(), ".env.local"));
+  loadDotEnv(path.resolve(process.cwd(), ".env"));
 
   const folderArg = process.argv[2] ?? "C:\\Users\\bitwo\\OneDrive\\Desktop\\Ariete preprocessing\\preprocessing\\files";
   const folder = path.resolve(folderArg);
