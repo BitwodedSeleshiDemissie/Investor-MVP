@@ -1,4 +1,5 @@
 import { loadWorkbook } from "@/lib/excel-loader";
+import type { InvestorPerf } from "@/types/portfolio";
 import {
   computeKPIs,
   computeTimeseries,
@@ -13,8 +14,6 @@ import {
 } from "@/lib/calculations";
 import { env } from "@/lib/env";
 import { logger } from "@/lib/logger";
-import { dbEnabled, query } from "@/db/client";
-import { initSchema } from "@/db/schema";
 import type { PortfolioSnapshot } from "@/types/portfolio";
 
 const settings = {
@@ -27,7 +26,7 @@ const settings = {
 
 export async function getPortfolioSnapshot(): Promise<PortfolioSnapshot> {
   const data = loadWorkbook(env.EXCEL_PATH);
-  logger.info({ cutoff: data.cutoffDate }, "Workbook loaded");
+  logger.info({ cutoff: data.cutoffDate }, "Tracker loaded");
 
   const [kpis, timeseries, allocation, irr, risk, distributions, targets, holdings, composition, warnings] =
     await Promise.all([
@@ -43,59 +42,6 @@ export async function getPortfolioSnapshot(): Promise<PortfolioSnapshot> {
       Promise.resolve(checkWarnings(data)),
     ]);
 
-  // Overlay cloud admin values if DB is connected
-  if (dbEnabled()) {
-    try {
-      await initSchema();
-      const cutoffStr = data.cutoffDate.toISOString().split("T")[0];
-      const controls = await query<{ capital_committed: string }>(
-        "SELECT capital_committed FROM admin_controls WHERE as_of_date <= $1 ORDER BY as_of_date DESC LIMIT 1",
-        [cutoffStr]
-      );
-      if (controls.length > 0) {
-        const cc = Number(controls[0].capital_committed);
-        kpis.capitalCommitted = cc;
-        kpis.pctSinceEntry = cc > 0 ? (kpis.totalPortfolioValue - cc) / cc : 0;
-        kpis.moic = cc > 0 ? (kpis.totalPortfolioValue + kpis.totalIncome) / cc : 0;
-      }
-
-      const nlRows = await query<{ display_name: string; value: string }>(
-        `SELECT DISTINCT ON (mv.item_key) mv.item_key, d.display_name, mv.value
-         FROM admin_manual_values mv
-         JOIN asset_dictionary d ON d.item_key = mv.item_key
-         WHERE mv.as_of_date <= $1
-           AND d.active = TRUE
-           AND LOWER(d.item_type) <> 'cash'
-           AND mv.item_key NOT ILIKE 'cash%'
-         ORDER BY mv.item_key, mv.as_of_date DESC, mv.created_at DESC`,
-        [cutoffStr]
-      );
-      const nlTotal = nlRows.reduce((s, r) => s + Number(r.value), 0);
-      if (nlTotal > 0) {
-        composition.nonListed = nlTotal;
-        composition.total = composition.listed + nlTotal + composition.cash;
-      }
-
-      const cashRows = await query<{ value: string }>(
-        `SELECT DISTINCT ON (mv.item_key) mv.item_key, mv.value
-         FROM admin_manual_values mv
-         JOIN asset_dictionary d ON d.item_key = mv.item_key
-         WHERE mv.as_of_date <= $1
-           AND d.active = TRUE
-           AND (LOWER(d.item_type) = 'cash' OR mv.item_key ILIKE 'cash%')
-         ORDER BY mv.item_key, mv.as_of_date DESC, mv.created_at DESC`,
-        [cutoffStr]
-      );
-      const cashTotal = cashRows.reduce((s, r) => s + Number(r.value), 0);
-      if (cashTotal > 0) {
-        composition.cash = cashTotal;
-        composition.total = composition.listed + composition.nonListed + cashTotal;
-      }
-    } catch (err) {
-      logger.warn({ err }, "Failed to overlay cloud admin values");
-    }
-  }
-
   function pm(d: typeof data, ...keys: string[]): number {
     for (const k of keys) {
       const v = d.portfolioMetrics[k];
@@ -109,7 +55,19 @@ export async function getPortfolioSnapshot(): Promise<PortfolioSnapshot> {
     realized:   pm(data, "Realized P&L",   "Total Realized P&L"),
     netTotal:   pm(data, "Net Total P&L",  "Net P&L"),
   };
-  const directaCash = pm(data, "Directa Cash", "Cash (Directa)", "Liquidity (Directa)");
+
+  const investorPerformance: InvestorPerf[] = data.investorPerformance.map((p) => ({
+    name: p.name,
+    type: p.type,
+    subscriptionDate: p.subscriptionDate.toISOString().split("T")[0],
+    capitalEur: p.capitalEur,
+    units: p.units,
+    yearsElapsed: p.yearsElapsed,
+    navUnitAtSub: p.navUnitAtSub,
+    currentValueEur: p.currentValueEur,
+    moic: p.moic,
+    irrAnnualized: p.irrAnnualized,
+  }));
 
   return {
     kpis,
@@ -122,10 +80,11 @@ export async function getPortfolioSnapshot(): Promise<PortfolioSnapshot> {
     holdings,
     composition,
     pnl,
-    directaCash,
+    directaCash: pm(data, "Total Cash", "Cash", "Liquidity"),
     cutoffDate: data.cutoffDate.toISOString().split("T")[0],
     investorName: env.INVESTOR_NAME,
     portfolioId: env.PORTFOLIO_ID,
     warnings,
+    investorPerformance,
   };
 }

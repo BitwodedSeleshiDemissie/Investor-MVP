@@ -1,7 +1,9 @@
+export const dynamic = "force-dynamic";
+
 import {
   TrendingUp, Wallet, Percent, DollarSign, Calendar,
   Activity, PieChart, Target, List, LayoutDashboard, AlertTriangle,
-  BarChart3, type LucideIcon,
+  BarChart3, Users, type LucideIcon,
 } from "lucide-react";
 import { getPortfolioSnapshot } from "@/server/queries/portfolio";
 import { KPICard } from "@/components/dashboard/KPICard";
@@ -13,6 +15,7 @@ import { IRRAnalysis } from "@/components/dashboard/IRRAnalysis";
 import { TargetVsActualChart } from "@/components/dashboard/TargetVsActual";
 import { DistributionsTable } from "@/components/dashboard/DistributionsTable";
 import { HoldingsTable } from "@/components/dashboard/HoldingsTable";
+import { InvestorPerformanceTable } from "@/components/dashboard/InvestorPerformanceTable";
 import { formatEur, formatPct, formatMultiple, formatDate } from "@/lib/utils";
 
 function Section({
@@ -44,7 +47,7 @@ function Section({
 
 export default async function DashboardPage() {
   const snap = await getPortfolioSnapshot();
-  const { kpis, irr, risk, allocation, timeseries, distributions, targets, holdings, composition, pnl, warnings } = snap;
+  const { kpis, irr, risk, allocation, timeseries, distributions, targets, holdings, composition, pnl, warnings, investorPerformance } = snap;
 
   type SubColor = "positive" | "negative" | "neutral";
   type Variant  = "default" | "primary" | "success" | "warning";
@@ -189,6 +192,16 @@ export default async function DashboardPage() {
       <Section title="Income &amp; Distributions" icon={Calendar}>
         <DistributionsTable distributions={distributions} />
       </Section>
+
+      {/* ── Investor Performance ── */}
+      {investorPerformance.length > 0 && (
+        <Section title="Investor Performance" icon={Users}>
+          <p className="text-xs text-muted-foreground mb-4">
+            IRR is annualized per investor and differs based on entry date — longer-tenured investors have a more stable IRR estimate.
+          </p>
+          <InvestorPerformanceTable investors={investorPerformance} />
+        </Section>
+      )}
 
       {/* ── Holdings ── */}
       <Section title="Holdings" icon={List} id="holdings">

@@ -100,6 +100,20 @@ export interface PortfolioSnapshot {
   investorName: string;
   portfolioId: string;
   warnings: string[];
+  investorPerformance: InvestorPerf[];
+}
+
+export interface InvestorPerf {
+  name: string;
+  type: string;
+  subscriptionDate: string;
+  capitalEur: number;
+  units: number;
+  yearsElapsed: number;
+  navUnitAtSub: number;
+  currentValueEur: number;
+  moic: number;
+  irrAnnualized: number;
 }
 
 export interface DataWarning {

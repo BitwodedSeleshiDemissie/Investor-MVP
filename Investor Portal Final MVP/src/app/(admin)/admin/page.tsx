@@ -1,8 +1,11 @@
-import { Building2, Wallet, Settings, Database, TrendingUp, List, ArrowRight, CheckCircle2, AlertCircle } from "lucide-react";
+import { Building2, Wallet, Settings, Database, TrendingUp, List, ArrowRight, CheckCircle2, AlertCircle, Upload } from "lucide-react";
 import Link from "next/link";
 import { getAdminData } from "@/server/queries/admin";
 import { dbEnabled } from "@/db/client";
 import { formatEur, formatDate } from "@/lib/utils";
+import { TrackerUpload } from "@/components/admin/TrackerUpload";
+
+export const dynamic = "force-dynamic";
 
 export default async function AdminPage() {
   const isDbEnabled = dbEnabled();
@@ -11,7 +14,6 @@ export default async function AdminPage() {
   const nlValues = adminData.manualValues.filter((v) => !v.itemKey.startsWith("cash"));
   const cashValues = adminData.manualValues.filter((v) => v.itemKey.startsWith("cash"));
 
-  // Latest per asset
   const latestNL = new Map<string, typeof nlValues[number]>();
   for (const v of nlValues) {
     const ex = latestNL.get(v.itemKey);
@@ -75,11 +77,14 @@ export default async function AdminPage() {
       <div className="pt-1">
         <h1 className="text-xl font-bold text-foreground tracking-tight">Admin Dashboard</h1>
         <p className="text-sm text-muted-foreground mt-0.5">
-          Portfolio data management · monthly value entry
+          Upload your tracker · portfolio data management
         </p>
       </div>
 
-      {/* DB status */}
+      {/* ── Tracker Upload (primary workflow) ── */}
+      <TrackerUpload />
+
+      {/* ── DB status ── */}
       <div className={`flex items-start gap-3 p-4 rounded-xl border text-sm ${
         isDbEnabled
           ? "bg-success/8 border-success/20 text-success"
@@ -101,7 +106,7 @@ export default async function AdminPage() {
         </div>
       </div>
 
-      {/* Section cards */}
+      {/* ── Section cards ── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {sections.map(({ href, icon: Icon, title, description, stat, color, bgColor, ok }) => (
           <Link

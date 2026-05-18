@@ -13,7 +13,7 @@ export const env = createEnv({
     TARGET_EQUITY_PCT: z.coerce.number().default(0.70),
     TARGET_BOND_PCT: z.coerce.number().default(0.20),
     TARGET_ALT_PCT: z.coerce.number().default(0.10),
-    EXCEL_PATH: z.string().default("../Ariete Invest - Report Model.xlsx"),
+    EXCEL_PATH: z.string().default("./data/tracker.xlsx"),
     DATABASE_URL: z.string().optional(),
     DATABASE_SSL: z
       .enum(["true", "false"])

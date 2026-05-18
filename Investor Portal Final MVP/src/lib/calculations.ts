@@ -20,7 +20,7 @@ interface Settings {
   targetAltPct: number;
 }
 
-// Newton-Raphson XIRR implementation
+// Newton-Raphson XIRR — used as fallback when pre-computed value unavailable
 function xirr(cashflows: { date: Date; amount: number }[]): number | null {
   if (cashflows.length < 2) return null;
   const t0 = cashflows[0].date.getTime();
@@ -32,13 +32,13 @@ function xirr(cashflows: { date: Date; amount: number }[]): number | null {
   }
   function dnpv(rate: number): number {
     return amounts.reduce(
-      (acc, amt, i) => acc - (i * amt * years[i]) / Math.pow(1 + rate, years[i] + 1),
+      (acc, amt, i) => acc - (amt * years[i]) / Math.pow(1 + rate, years[i] + 1),
       0
     );
   }
 
   let rate = 0.1;
-  for (let iter = 0; iter < 100; iter++) {
+  for (let iter = 0; iter < 200; iter++) {
     const f = npv(rate);
     const df = dnpv(rate);
     if (Math.abs(df) < 1e-12) break;
@@ -50,6 +50,7 @@ function xirr(cashflows: { date: Date; amount: number }[]): number | null {
   return null;
 }
 
+// Read a numeric value from portfolioMetrics by any of the given keys
 function pm(data: WorkbookData, ...keys: string[]): number {
   for (const k of keys) {
     const v = data.portfolioMetrics[k];
@@ -60,9 +61,10 @@ function pm(data: WorkbookData, ...keys: string[]): number {
 
 function classifyAsset(assetClass: string): "equity" | "bonds" | "alts" | "cash" | "other" {
   const ac = assetClass.toLowerCase();
-  if (ac.includes("stock") || ac.includes("equity") || ac.includes("etf") || ac.includes("etc")) return "equity";
+  if (ac.includes("stock") || ac.includes("equity")) return "equity";
+  if (ac.includes("etf") || ac.includes("etc")) return "equity"; // equity ETFs grouped as equity
   if (ac.includes("bond") || ac.includes("fixed") || ac.includes("coupon")) return "bonds";
-  if (ac.includes("crypto") || ac.includes("alternative") || ac.includes("real estate") || ac.includes("fund")) return "alts";
+  if (ac.includes("crypto") || ac.includes("alternative") || ac.includes("etp")) return "alts";
   if (ac.includes("cash") || ac.includes("liquidity")) return "cash";
   return "other";
 }
@@ -71,14 +73,17 @@ export function computeKPIs(data: WorkbookData, settings: Settings): KPIs {
   const nav = pm(data, "Total Portfolio Value", "NAV", "Portfolio Value");
   const committed = pm(data, "Capital Committed", "Total Invested Capital", "Committed Capital");
 
-  // Total income: use pre-computed Portfolio Metrics value if available, else sum trade log
+  // Total income: Div/Int Lordi Cum from tracker (already in portfolioMetrics)
   const pmIncome = pm(data, "Total Income (Div+Cpn+Dist)", "Total Income", "Total Distributions");
   const incomeRows = data.tradeLog.filter((r) => INCOME_TYPES.has(r.type));
   const tradeLogIncome = incomeRows.reduce((s, r) => s + r.netAmount, 0);
   const totalIncome = pmIncome > 0 ? pmIncome : Math.abs(tradeLogIncome);
 
   const pctSinceEntry = committed > 0 ? (nav - committed) / committed : 0;
-  const moic = committed > 0 ? (nav + totalIncome) / committed : 0;
+
+  // MOIC = NAV / Capital (income is already inside NAV as cash)
+  const moic = committed > 0 ? nav / committed : 0;
+
   const currentYield = nav > 0 ? totalIncome / nav : 0;
 
   const distributions = incomeRows.sort((a, b) => b.date.getTime() - a.date.getTime());
@@ -115,13 +120,35 @@ export function computeTimeseries(data: WorkbookData): NavPoint[] {
   });
 }
 
+function normalizeAssetClass(raw: string): string {
+  const r = raw.toLowerCase();
+  if (r.includes("stock") || r.includes("equity")) return "Stocks";
+  if (r.includes("bond") || r.includes("fixed income")) return "Bonds";
+  if (r.includes("etf") || r.includes("etc")) return "ETFs / ETCs";
+  if (r.includes("crypto") || r.includes("etp")) return "Crypto ETPs";
+  if (r.includes("cash") || r.includes("liquidity")) return "Cash";
+  if (r.includes("fund") || r.includes("private") || r.includes("alternative")) return "Alternatives";
+  return raw || "Other";
+}
+
 export function computeAllocation(data: WorkbookData): AllocationSlice[] {
   const buckets: Record<string, number> = {};
+
   for (const h of data.holdings) {
     if (h.shares <= 0) continue;
     const label = normalizeAssetClass(h.assetClass);
     buckets[label] = (buckets[label] ?? 0) + h.marketValue;
   }
+
+  // Non-listed participations and loans as Private / Non-Listed bucket
+  const nlVal = pm(data, "Non-Listed Total", "Non-Listed Value");
+  const loansVal = pm(data, "Loans Outstanding");
+  const privateTotal = nlVal + loansVal;
+  if (privateTotal > 0) {
+    buckets["Private / Non-Listed"] = (buckets["Private / Non-Listed"] ?? 0) + privateTotal;
+  }
+
+  // Cash
   const cashVal = pm(data, "Total Cash", "Cash Balance (est.)", "Cash", "Cash Total", "Liquidity");
   if (cashVal > 0) buckets["Cash"] = (buckets["Cash"] ?? 0) + cashVal;
 
@@ -135,26 +162,19 @@ export function computeAllocation(data: WorkbookData): AllocationSlice[] {
     .sort((a, b) => b.marketValue - a.marketValue);
 }
 
-function normalizeAssetClass(raw: string): string {
-  const r = raw.toLowerCase();
-  if (r.includes("stock") || r.includes("equity")) return "Stocks";
-  if (r.includes("bond") || r.includes("fixed income")) return "Bonds";
-  if (r.includes("etf")) return "ETFs / ETCs";
-  if (r.includes("etc")) return "ETFs / ETCs";
-  if (r.includes("crypto")) return "Crypto ETPs";
-  if (r.includes("cash") || r.includes("liquidity")) return "Cash";
-  if (r.includes("fund") || r.includes("private")) return "Alternatives";
-  return raw || "Other";
-}
-
 export function computeIRR(data: WorkbookData): IRRData {
   const nav = pm(data, "Total Portfolio Value", "NAV", "Portfolio Value");
   const valuationDate = data.cutoffDate.toISOString().split("T")[0];
 
+  // Prefer pre-computed IRR from 11_Performance (exact same as Excel)
   let investorIrr: number | null = null;
-  let fundIrr: number | null = null;
+  const pmIrr = pm(data, "Investor IRR", "IRR Investor");
+  if (pmIrr !== 0) {
+    investorIrr = pmIrr > 1 ? pmIrr / 100 : pmIrr;
+  }
 
-  if (data.irrInvestor.length > 1) {
+  // Attempt XIRR from subscription cashflows (adds current NAV as terminal)
+  if (investorIrr === null && data.irrInvestor.length > 1) {
     const cfs = [
       ...data.irrInvestor.map((r) => ({ date: r.date, amount: r.cashFlow })),
       { date: data.cutoffDate, amount: nav },
@@ -162,40 +182,41 @@ export function computeIRR(data: WorkbookData): IRRData {
     investorIrr = xirr(cfs);
   }
 
-  if (data.irrPortfolio.length > 1) {
-    const listedNav = pm(data, "Listed Market Value", "Listed Value", "Total Portfolio Value");
-    const cfs = [
-      ...data.irrPortfolio.map((r) => ({ date: r.date, amount: r.cashFlow })),
-      { date: data.cutoffDate, amount: listedNav },
-    ];
-    fundIrr = xirr(cfs);
-  }
-
-  // Fall back to pre-computed values in portfolio metrics
-  if (investorIrr === null) {
-    const v = pm(data, "Investor IRR", "IRR Investor");
-    if (v !== 0) investorIrr = v > 1 ? v / 100 : v;
-  }
-  if (fundIrr === null) {
-    const v = pm(data, "Fund IRR", "Portfolio IRR", "IRR Fund");
-    if (v !== 0) fundIrr = v > 1 ? v / 100 : v;
-  }
+  const fundIrr = investorIrr; // tracker uses investor perspective only
 
   return { fundIrr, investorIrr, valuationDate };
 }
 
 export function computeRisk(data: WorkbookData, settings: Settings): RiskMetrics {
   const returns = data.monthlyReturns.map((r) => r.monthlyReturn);
-  const annReturn = pm(data, "Annualized Return (TWR)", "Annualized Return", "Ann. Return");
-
   const n = returns.length;
+
+  // Use pre-computed risk values from 11_Performance when available
+  const pmSharpe   = pm(data, "Sharpe Ratio Precomputed");
+  const pmVol      = pm(data, "Volatility Annualized");
+  const pmDrawdown = pm(data, "Max Drawdown Precomputed");
+  const pmAnnRet   = pm(data, "Annualized Return (TWR)", "Return Total");
+  const rfRate     = pm(data, "Risk Free Rate") || settings.riskFreeRate;
+
+  if (pmVol !== 0 || pmSharpe !== 0 || pmDrawdown !== 0) {
+    return {
+      sharpeRatio: pmSharpe,
+      volatilityAnnualized: pmVol,
+      maxDrawdown: pmDrawdown,
+      annualizedReturn: pmAnnRet,
+      riskFreeRate: rfRate,
+      dataWindowMonths: n,
+    };
+  }
+
+  // Fallback: compute from monthly returns series
   if (n < 3) {
     return {
       sharpeRatio: 0,
       volatilityAnnualized: 0,
       maxDrawdown: 0,
-      annualizedReturn: annReturn > 1 ? annReturn / 100 : annReturn,
-      riskFreeRate: settings.riskFreeRate,
+      annualizedReturn: pmAnnRet > 1 ? pmAnnRet / 100 : pmAnnRet,
+      riskFreeRate: rfRate,
       dataWindowMonths: n,
     };
   }
@@ -203,11 +224,9 @@ export function computeRisk(data: WorkbookData, settings: Settings): RiskMetrics
   const mean = returns.reduce((s, r) => s + r, 0) / n;
   const variance = returns.reduce((s, r) => s + Math.pow(r - mean, 2), 0) / (n - 1);
   const volatilityAnnualized = Math.sqrt(variance * 12);
+  const ar = pmAnnRet > 1 ? pmAnnRet / 100 : pmAnnRet > 0 ? pmAnnRet : mean * 12;
+  const sharpeRatio = volatilityAnnualized > 0 ? (ar - rfRate) / volatilityAnnualized : 0;
 
-  const ar = annReturn > 1 ? annReturn / 100 : annReturn > 0 ? annReturn : mean * 12;
-  const sharpeRatio = volatilityAnnualized > 0 ? (ar - settings.riskFreeRate) / volatilityAnnualized : 0;
-
-  // Max drawdown from NAV series
   let maxDrawdown = 0;
   let peak = data.monthlyReturns[0]?.nav ?? 0;
   for (const r of data.monthlyReturns) {
@@ -221,7 +240,7 @@ export function computeRisk(data: WorkbookData, settings: Settings): RiskMetrics
     volatilityAnnualized,
     maxDrawdown,
     annualizedReturn: ar,
-    riskFreeRate: settings.riskFreeRate,
+    riskFreeRate: rfRate,
     dataWindowMonths: n,
   };
 }
@@ -241,6 +260,7 @@ export function computeDistributions(data: WorkbookData): DistributionEvent[] {
 export function computeTargets(data: WorkbookData, settings: Settings): TargetVsActual {
   const nav = pm(data, "Total Portfolio Value", "NAV", "Portfolio Value");
   const buckets = { equity: 0, bonds: 0, alts: 0, cash: 0 };
+
   for (const h of data.holdings) {
     if (h.shares <= 0) continue;
     const cls = classifyAsset(h.assetClass);
@@ -248,6 +268,12 @@ export function computeTargets(data: WorkbookData, settings: Settings): TargetVs
     else if (cls === "bonds") buckets.bonds += h.marketValue;
     else if (cls === "alts") buckets.alts += h.marketValue;
   }
+
+  // Add non-listed participations and loans to alts
+  const nlVal = pm(data, "Non-Listed Total", "Non-Listed Value");
+  const loansVal = pm(data, "Loans Outstanding");
+  buckets.alts += nlVal + loansVal;
+
   buckets.cash = pm(data, "Total Cash", "Cash Balance (est.)", "Cash", "Cash Total", "Liquidity");
   const total = nav > 0 ? nav : Object.values(buckets).reduce((s, v) => s + v, 0);
 
@@ -279,25 +305,27 @@ export function computeHoldings(data: WorkbookData): Holding[] {
 }
 
 export function computeComposition(data: WorkbookData): PortfolioComposition {
-  const listed = data.holdings
-    .filter((h) => h.shares > 0 && !["private", "non-listed", "unlisted"].some((s) => h.assetClass.toLowerCase().includes(s)))
-    .reduce((s, h) => s + h.marketValue, 0);
-  const nonListed = pm(data, "Non-Listed Total", "Non-Listed Value", "Private Equity Total", "Total Non-Listed");
-  const cash = pm(data, "Total Cash", "Cash Balance (est.)", "Directa Cash", "Cash", "Cash Total", "Liquidity");
+  const listed    = pm(data, "Listed Market Value", "Listed Value");
+  const nlVal     = pm(data, "Non-Listed Total", "Non-Listed Value");
+  const loansVal  = pm(data, "Loans Outstanding");
+  const nonListed = nlVal + loansVal;
+  const cash      = pm(data, "Total Cash", "Cash Balance (est.)", "Cash", "Cash Total", "Liquidity");
   return { listed, nonListed, cash, total: listed + nonListed + cash };
 }
 
-export function checkWarnings(data: WorkbookData, tolerance = 0.005): string[] {
+export function checkWarnings(data: WorkbookData, tolerance = 0.01): string[] {
   const warnings: string[] = [];
   const nav = pm(data, "Total Portfolio Value", "NAV");
-  const holdingsTotal = data.holdings
-    .filter((h) => h.shares > 0)
-    .reduce((s, h) => s + h.marketValue, 0);
-  if (nav > 0 && holdingsTotal > 0) {
-    const diff = Math.abs(nav - holdingsTotal) / nav;
+  const listedMv = pm(data, "Listed Market Value");
+  const nonListed = pm(data, "Non-Listed Total", "Non-Listed Value");
+  const loans = pm(data, "Loans Outstanding");
+  const cash = pm(data, "Total Cash", "Cash Balance (est.)", "Cash");
+  const reconstructed = listedMv + nonListed + loans + cash;
+  if (nav > 0 && reconstructed > 0) {
+    const diff = Math.abs(nav - reconstructed) / nav;
     if (diff > tolerance) {
       warnings.push(
-        `NAV reconciliation gap: ${(diff * 100).toFixed(2)}% difference between holdings sum (${holdingsTotal.toFixed(0)}) and reported NAV (${nav.toFixed(0)})`
+        `NAV reconciliation: tracker NAV ${nav.toFixed(0)} vs components sum ${reconstructed.toFixed(0)} (${(diff * 100).toFixed(1)}% gap)`
       );
     }
   }
