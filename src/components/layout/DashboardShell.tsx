@@ -11,7 +11,7 @@ interface DashboardShellProps {
 
 export function DashboardShell({ children, role, investorName, portfolioId }: DashboardShellProps) {
   return (
-    <div className="flex flex-col min-h-screen bg-background">
+    <div className="flex flex-col h-screen bg-background">
       <Header role={role} investorName={investorName} portfolioId={portfolioId} />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar role={role} />
