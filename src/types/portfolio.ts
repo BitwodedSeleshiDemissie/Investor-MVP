@@ -85,6 +85,55 @@ export interface PnLBreakdown {
   netTotal: number;
 }
 
+export interface InvestorPerf {
+  name: string;
+  type: string;
+  subscriptionDate: string;
+  capitalEur: number;
+  units: number;
+  yearsElapsed: number;
+  navUnitAtSub: number;
+  currentValueEur: number;
+  moic: number;
+  irrAnnualized: number;
+}
+
+export interface OverlaySources {
+  capitalCommitted: number;
+  nonListedValue: number;
+  externalCash: number;
+  overlayItemCount: number;
+  investorProfileCount: number;
+  cashFormula?: CashFormulaBreakdown;
+  // Per-item breakdown frozen at upload time — absent on snapshots predating this field.
+  manualItems?: Array<{
+    item_key: string;
+    item_type: string;
+    value: number;
+    value_date?: string | null;
+    display_name?: string | null;
+    subcategory?: string | null;
+  }>;
+  source?: string;
+}
+
+export interface CashFormulaBreakdown {
+  source: string;
+  formula: string;
+  baseCutoffDate: string;
+  capitalCollected: number;
+  listedNetTradeCost: number;
+  income: number;
+  baseParticipationNetCost: number;
+  baseLoanNetPrincipal: number;
+  participationNetCost: number;
+  loanNetPrincipal: number;
+  operatingPnl: number;
+  postCutoffParticipationNetCost: number;
+  postCutoffLoanNetPrincipal: number;
+  cash: number;
+}
+
 export interface PortfolioSnapshot {
   kpis: KPIs;
   timeseries: NavPoint[];
@@ -101,6 +150,12 @@ export interface PortfolioSnapshot {
   investorName: string;
   portfolioId: string;
   warnings: string[];
+  investorPerformance: InvestorPerf[];
+  // Immutability metadata — present on all snapshots created after the freeze system was introduced.
+  // Absence means legacy snapshot: use raw payload without live overlay re-reads.
+  overlaysFrozen?: boolean;
+  frozenAt?: string;
+  overlaySources?: OverlaySources;
 }
 
 export interface DataWarning {
@@ -140,4 +195,18 @@ export interface AdminData {
   dictionary: AdminDictionaryItem[];
   manualValues: ManualValueRow[];
   controls: ControlRow[];
+}
+
+export interface InvestorProfile {
+  id?: number;
+  name: string;
+  investorType: string;
+  capitalEur: number;
+  units: number;
+  subscriptionDate: string;
+  navUnitAtSub: number;
+  active: boolean;
+  notes: string;
+  createdAt?: string;
+  updatedAt?: string;
 }

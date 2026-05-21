@@ -1,14 +1,18 @@
 import { redirect } from "next/navigation";
-import { getSession } from "@/lib/auth";
+import { cleanDisplayName, getSession } from "@/lib/auth";
 import { DashboardShell } from "@/components/layout/DashboardShell";
-import { env } from "@/lib/env";
+import { getFundSettings } from "@/server/fund-settings";
 
 export default async function InvestorLayout({ children }: { children: React.ReactNode }) {
   const session = await getSession();
   if (!session) redirect("/login");
 
+  const investorName = cleanDisplayName(session.investorName) ?? "Investor";
+  const settings = await getFundSettings();
+  const portfolioId = cleanDisplayName(settings.portfolioId);
+
   return (
-    <DashboardShell role={session.role} investorName={env.INVESTOR_NAME} portfolioId={env.PORTFOLIO_ID}>
+    <DashboardShell role={session.role} investorName={investorName} portfolioId={portfolioId}>
       {children}
     </DashboardShell>
   );

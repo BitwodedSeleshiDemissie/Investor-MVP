@@ -1,0 +1,28 @@
+{
+  "name": "Ariete Investor Portal",
+  "short_name": "Ariete",
+  "description": "Private portfolio reporting for Ariete Capital clients",
+  "start_url": "/dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0d0f1a",
+  "theme_color": "#f97316",
+  "icons": [
+    {
+      "src": "/icon.png",
+      "sizes": "604x604",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/apple-icon.png",
+      "sizes": "604x604",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "screenshots": [],
+  "categories": ["finance", "business"],
+  "prefer_related_applications": false
+}

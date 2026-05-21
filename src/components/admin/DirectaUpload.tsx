@@ -1,0 +1,493 @@
+﻿"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { AlertCircle, CheckCircle2, FileSpreadsheet, Loader2, Upload, X } from "lucide-react";
+import { useRouter } from "next/navigation";
+
+type ManualItem = {
+  item_key: string;
+  display_name: string;
+  item_type: string;
+  subcategory: string | null;
+  value: string;
+};
+
+type ConfirmResult = {
+  snapshotId: number;
+  cutoffDate: string;
+  portfolioValue: number;
+  fundIrr: number | null;
+  directaListed: number;
+  directaCash: number;
+  nonDirectaTotal: number;
+  aiSummary: string;
+  canPublish: boolean;
+  checks: Array<{
+    severity: "ok" | "warning" | "blocker";
+    title: string;
+    detail: string;
+  }>;
+};
+
+function fmt(value: number): string {
+  return new Intl.NumberFormat("it-IT", {
+    style: "currency",
+    currency: "EUR",
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
+function fmtPct(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return "—";
+  return `${value >= 0 ? "+" : ""}${(value * 100).toFixed(1)}%`;
+}
+
+function monthToLastDay(ym: string): string {
+  const [year, month] = ym.split("-").map(Number);
+  const last = new Date(year, month, 0);
+  return `${year}-${String(month).padStart(2, "0")}-${String(last.getDate()).padStart(2, "0")}`;
+}
+
+function currentYearMonth(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function parseAiSummary(summary: string): { bullets: string[]; verdict: string } {
+  const lines = summary
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  let verdictIdx = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (lines[i].startsWith("Ready to publish") || lines[i].startsWith("Needs manual")) {
+      verdictIdx = i;
+      break;
+    }
+  }
+  if (verdictIdx >= 0) {
+    return { bullets: lines.slice(0, verdictIdx), verdict: lines[verdictIdx] };
+  }
+  return { bullets: lines.slice(0, -1), verdict: lines.at(-1) ?? "" };
+}
+
+export function DirectaUpload() {
+  const router = useRouter();
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const [selectedMonth, setSelectedMonth] = useState(currentYearMonth());
+  const [files, setFiles] = useState<File[]>([]);
+  const [manualItems, setManualItems] = useState<ManualItem[]>([]);
+  const [defaultsStatus, setDefaultsStatus] = useState<"loading" | "loaded" | "error">("loading");
+
+  const [status, setStatus] = useState<"idle" | "uploading" | "confirm" | "published" | "error">("idle");
+  const [publishStatus, setPublishStatus] = useState<"idle" | "publishing">("idle");
+  const [result, setResult] = useState<ConfirmResult | null>(null);
+  const [errorMsg, setErrorMsg] = useState("");
+
+  useEffect(() => {
+    fetch("/api/admin/manual-defaults")
+      .then((r) => r.json())
+      .then((data: { items?: { item_key: string; display_name: string; item_type: string; subcategory: string | null; latest_value: string | null }[] }) => {
+        const items: ManualItem[] = (data.items ?? []).map((row) => ({
+          item_key: row.item_key,
+          display_name: row.display_name,
+          item_type: row.item_type,
+          subcategory: row.subcategory,
+          value: row.latest_value ?? "0",
+        }));
+        setManualItems(items);
+        setDefaultsStatus("loaded");
+      })
+      .catch(() => setDefaultsStatus("error"));
+  }, []);
+
+  function handleFiles(list: FileList | null) {
+    if (!list || list.length === 0) return;
+    const csvs = [...list].filter((f) => f.name.toLowerCase().endsWith(".csv"));
+    if (csvs.length === 0) {
+      setErrorMsg("Only Directa .csv files are accepted.");
+      setStatus("error");
+      return;
+    }
+    setFiles(csvs);
+    setStatus("idle");
+    setErrorMsg("");
+    setResult(null);
+  }
+
+  function setItemValue(item_key: string, value: string) {
+    setManualItems((prev) =>
+      prev.map((item) => (item.item_key === item_key ? { ...item, value } : item))
+    );
+  }
+
+  async function handleProcess() {
+    if (files.length === 0) return;
+    setStatus("uploading");
+    setErrorMsg("");
+    setResult(null);
+
+    const form = new FormData();
+    for (const file of files) form.append("files", file);
+    form.append("cutoffDateOverride", monthToLastDay(selectedMonth));
+    form.append(
+      "manualInputs",
+      JSON.stringify(
+        manualItems.map((item) => ({
+          item_key: item.item_key,
+          item_type: item.item_type,
+          display_name: item.display_name,
+          subcategory: item.subcategory,
+          value: Number(item.value) || 0,
+        }))
+      )
+    );
+
+    try {
+      const resp = await fetch("/api/admin/upload-snapshot", { method: "POST", body: form });
+      const json = await resp.json();
+      if (!resp.ok) throw new Error(json.error ?? `HTTP ${resp.status}`);
+      setResult({
+        snapshotId: json.snapshotId,
+        cutoffDate: json.cutoffDate,
+        portfolioValue: json.portfolioValue,
+        fundIrr: json.fundIrr ?? null,
+        directaListed: json.directaListed ?? 0,
+        directaCash: json.directaCash ?? 0,
+        nonDirectaTotal: json.nonDirectaTotal ?? 0,
+        aiSummary: json.aiSummary ?? "",
+        canPublish: json.canPublish !== false,
+        checks: Array.isArray(json.checks) ? json.checks : [],
+      });
+      setFiles([]);
+      setStatus("confirm");
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : String(err));
+      setStatus("error");
+    }
+  }
+
+  async function handlePublish() {
+    if (!result?.snapshotId || !result.canPublish) return;
+    setPublishStatus("publishing");
+    setErrorMsg("");
+    try {
+      const resp = await fetch("/api/admin/publish-snapshot", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          snapshotId: result.snapshotId,
+          approvalNote: "Admin reviewed and accepted snapshot via upload form.",
+        }),
+      });
+      const json = await resp.json();
+      if (!resp.ok) throw new Error(json.error ?? `HTTP ${resp.status}`);
+      setStatus("published");
+      setResult(null);
+      router.refresh();
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : String(err));
+      setStatus("error");
+    } finally {
+      setPublishStatus("idle");
+    }
+  }
+
+  const nonListedItems = manualItems.filter((item) => item.item_type.toLowerCase() !== "cash");
+  const cashItems = manualItems.filter((item) => item.item_type.toLowerCase() === "cash");
+  const participationItems = nonListedItems.filter(
+    (item) => item.item_key.startsWith("TRACKER_PARTICIPATION_") || (item.subcategory ?? "").toLowerCase().includes("participation")
+  );
+  const loanItems = nonListedItems.filter(
+    (item) => item.item_key.startsWith("TRACKER_LOAN_") || (item.subcategory ?? "").toLowerCase().includes("loan")
+  );
+  const otherNonListedItems = nonListedItems.filter(
+    (item) => !participationItems.includes(item) && !loanItems.includes(item)
+  );
+
+  function renderManualGroup(title: string, items: ManualItem[]) {
+    if (items.length === 0) return null;
+    return (
+      <>
+        <div className="px-4 py-2 bg-secondary/20 border-t border-border/30 first:border-t-0">
+          <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">{title}</span>
+        </div>
+        {items.map((item) => (
+          <div key={item.item_key} className="flex items-center gap-3 px-4 py-2.5 border-t border-border/30">
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium text-foreground truncate">{item.display_name}</p>
+              {item.subcategory && <p className="text-[10px] text-muted-foreground">{item.subcategory}</p>}
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <span className="text-xs text-muted-foreground">EUR</span>
+              <input
+                type="number"
+                min="0"
+                step="1000"
+                value={item.value}
+                onChange={(e) => setItemValue(item.item_key, e.target.value)}
+                className="w-32 rounded-lg border border-border/60 bg-background/60 px-2 py-1 text-xs font-numeric text-right text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
+              />
+            </div>
+          </div>
+        ))}
+      </>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="space-y-1.5">
+        <label className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+          Snapshot month
+        </label>
+        <input
+          type="month"
+          value={selectedMonth}
+          onChange={(e) => setSelectedMonth(e.target.value)}
+          className="rounded-xl border border-border/60 bg-card px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
+        />
+      </div>
+
+      <div
+        className="rounded-2xl border-2 border-dashed border-border/60 p-8 text-center transition-colors hover:border-primary/40 cursor-pointer"
+        style={{ background: "hsl(var(--card))" }}
+        onClick={() => inputRef.current?.click()}
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault();
+          handleFiles(e.dataTransfer.files);
+        }}
+      >
+        <input
+          ref={inputRef}
+          type="file"
+          accept=".csv,text/csv"
+          multiple
+          className="hidden"
+          onChange={(e) => handleFiles(e.target.files)}
+        />
+        <Upload className="w-8 h-8 text-muted-foreground/50 mx-auto mb-3" />
+        <p className="text-sm font-semibold text-foreground">Drop Directa Estratto Conto CSVs here or click to browse</p>
+        <p className="text-xs text-muted-foreground mt-1">Monthly statement exports in the CEO tracker format</p>
+      </div>
+
+      {files.length > 0 && (
+        <div className="rounded-xl border border-border/60 overflow-hidden" style={{ background: "hsl(var(--card))" }}>
+          {files.map((file) => (
+            <div key={`${file.name}-${file.size}`} className="flex items-center gap-3 px-4 py-3 border-b border-border/40 last:border-0">
+              <FileSpreadsheet className="w-4 h-4 text-muted-foreground/60 shrink-0" />
+              <span className="font-mono text-xs text-foreground flex-1 truncate">{file.name}</span>
+              <span className="text-xs text-muted-foreground">{(file.size / 1024).toFixed(0)} KB</span>
+            </div>
+          ))}
+          <button
+            onClick={() => { setFiles([]); setStatus("idle"); setResult(null); }}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <X className="w-3.5 h-3.5" />
+            Clear selection
+          </button>
+        </div>
+      )}
+
+      {defaultsStatus === "loaded" && manualItems.length > 0 && (
+        <div className="rounded-xl border border-border/60 overflow-hidden" style={{ background: "hsl(var(--card))" }}>
+          <div className="px-4 py-3 border-b border-border/40">
+            <p className="text-xs font-semibold text-foreground">Manual non-Directa items</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">
+              Pre-filled from last known values. Confirm or edit before processing.
+            </p>
+          </div>
+
+          {nonListedItems.length > 0 && (
+            <>
+              {renderManualGroup("Participations - sheet 06", participationItems)}
+              {renderManualGroup("Private loan principal - sheet 07", loanItems)}
+              {renderManualGroup("Other non-Directa values", otherNonListedItems)}
+            </>
+          )}
+
+          {cashItems.length > 0 && (
+            <>
+              <div className="px-4 py-2 bg-secondary/20 border-t border-border/30">
+                <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">External cash</span>
+              </div>
+              {cashItems.map((item) => (
+                <div key={item.item_key} className="flex items-center gap-3 px-4 py-2.5 border-t border-border/30">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium text-foreground truncate">{item.display_name}</p>
+                    <p className="text-[10px] text-muted-foreground">{item.subcategory}</p>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className="text-xs text-muted-foreground">EUR</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1000"
+                      value={item.value}
+                      onChange={(e) => setItemValue(item.item_key, e.target.value)}
+                      className="w-32 rounded-lg border border-border/60 bg-background/60 px-2 py-1 text-xs font-numeric text-right text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
+                    />
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+      )}
+
+      {defaultsStatus === "loading" && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          Loading manual item defaults...
+        </div>
+      )}
+
+      <button
+        onClick={handleProcess}
+        disabled={files.length === 0 || status === "uploading" || defaultsStatus === "loading"}
+        className="w-full py-3 rounded-xl text-sm font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+        style={{
+          background:
+            files.length > 0 && status !== "uploading" && defaultsStatus !== "loading"
+              ? "hsl(var(--primary))"
+              : undefined,
+          color: "hsl(var(--primary-foreground))",
+          border: "1px solid hsl(var(--primary))",
+        }}
+      >
+        {status === "uploading"
+          ? "Processing..."
+          : defaultsStatus === "loading"
+          ? "Loading defaults..."
+          : "Process"}
+      </button>
+
+      {status === "published" && (
+        <div className="flex items-start gap-2.5 px-4 py-3 rounded-xl border border-success/20 text-success text-sm" style={{ background: "hsl(var(--card))" }}>
+          <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+          Snapshot published. Investor portal now shows the latest month.
+        </div>
+      )}
+
+      {status === "error" && (
+        <div className="flex items-start gap-2.5 px-4 py-3 rounded-xl border border-destructive/20 text-destructive text-sm" style={{ background: "hsl(var(--card))" }}>
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+          {errorMsg || "Upload failed."}
+        </div>
+      )}
+
+      {status === "uploading" && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-2xl border border-border/70 p-6 text-center" style={{ background: "hsl(var(--card))", boxShadow: "var(--shadow-card)" }}>
+            <Loader2 className="mx-auto mb-4 h-7 w-7 animate-spin text-primary" />
+            <h3 className="text-base font-bold text-foreground">Building snapshot</h3>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Parsing Directa statements, applying manual items, running checks...
+            </p>
+          </div>
+        </div>
+      )}
+
+      {status === "confirm" && result && (() => {
+        const { bullets, verdict } = parseAiSummary(result.aiSummary);
+        const blockers = result.checks.filter((check) => check.severity === "blocker");
+        const warnings = result.checks.filter((check) => check.severity === "warning");
+        const isReady = result.canPublish && blockers.length === 0;
+        const statusText = blockers.length > 0
+          ? `Blocked: ${blockers[0].title}`
+          : verdict || (result.canPublish ? "Ready to publish." : "Needs manual attention.");
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 px-4 backdrop-blur-sm">
+            <div className="w-full max-w-md rounded-2xl border border-border/70 overflow-hidden" style={{ background: "hsl(var(--card))", boxShadow: "var(--shadow-card)" }}>
+              <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-border/60">
+                <h3 className="text-sm font-bold text-foreground">Snapshot -- {result.cutoffDate}</h3>
+                <button
+                  onClick={() => setStatus("idle")}
+                  className="rounded-lg p-1.5 text-muted-foreground/60 hover:bg-secondary/50 hover:text-foreground"
+                  aria-label="Cancel"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="px-5 py-4 space-y-2">
+                {[
+                  { label: "Total NAV", value: fmt(result.portfolioValue) },
+                  { label: "Fund IRR", value: fmtPct(result.fundIrr) },
+                  { label: "Listed holdings (Directa)", value: fmt(result.directaListed) },
+                  { label: "Cash (Directa)", value: fmt(result.directaCash) },
+                  { label: "Non-Directa / manual", value: fmt(result.nonDirectaTotal) },
+                ].map(({ label, value }) => (
+                  <div key={label} className="flex items-center justify-between gap-2">
+                    <span className="text-xs text-muted-foreground">{label}</span>
+                    <span className="text-xs font-semibold font-numeric text-foreground">{value}</span>
+                  </div>
+                ))}
+              </div>
+
+              {bullets.length > 0 && (
+                <div className="px-5 pb-3 space-y-1.5 border-t border-border/40 pt-3">
+                  {bullets.map((bullet, i) => (
+                    <p key={i} className="text-xs text-muted-foreground leading-relaxed">{bullet}</p>
+                  ))}
+                </div>
+              )}
+
+              {(blockers.length > 0 || warnings.length > 0) && (
+                <div className="mx-5 mb-4 space-y-2">
+                  {[...blockers, ...warnings].map((check) => (
+                    <div
+                      key={`${check.severity}-${check.title}`}
+                      className={`rounded-xl border px-3 py-2 text-xs ${
+                        check.severity === "blocker"
+                          ? "border-destructive/30 bg-destructive/10 text-destructive"
+                          : "border-warning/30 bg-warning/10 text-warning"
+                      }`}
+                    >
+                      <p className="font-semibold">{check.title}</p>
+                      <p className="mt-1 leading-relaxed opacity-90">{check.detail}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className={`mx-5 mb-4 px-3 py-2.5 rounded-xl border text-xs font-semibold flex items-center gap-2 ${
+                isReady
+                  ? "border-success/30 bg-success/10 text-success"
+                  : "border-warning/30 bg-warning/10 text-warning"
+              }`}>
+                {isReady
+                  ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                  : <AlertCircle className="w-3.5 h-3.5 shrink-0" />}
+                {statusText}
+              </div>
+
+              <div className="flex gap-3 px-5 pb-5">
+                <button
+                  onClick={() => setStatus("idle")}
+                  className="flex-1 rounded-xl border border-border/60 py-2.5 text-sm font-semibold text-foreground hover:bg-secondary/40 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handlePublish}
+                  disabled={publishStatus === "publishing" || !result.canPublish}
+                  className="flex-1 rounded-xl bg-primary py-2.5 text-sm font-bold text-primary-foreground transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {publishStatus === "publishing"
+                    ? "Publishing..."
+                    : result.canPublish
+                      ? "Accept & Publish"
+                      : "Cannot Publish"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+    </div>
+  );
+}

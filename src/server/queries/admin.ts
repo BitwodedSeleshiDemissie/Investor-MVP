@@ -1,5 +1,26 @@
-import { query, dbEnabled } from "@/db/client";
-import type { AdminDictionaryItem, ManualValueRow, ControlRow, AdminData } from "@/types/portfolio";
+import { dbEnabled, getPrisma } from "@/db/prisma";
+import type {
+  AdminDictionaryItem,
+  ManualValueRow,
+  ControlRow,
+  AdminData,
+  InvestorProfile,
+  PortfolioSnapshot,
+} from "@/types/portfolio";
+
+export type SnapshotHistoryRow = {
+  id: number;
+  cutoffDate: string;
+  status: "draft" | "published";
+  portfolioValue: number;
+  holdingsCount: number;
+  approvedBy: string | null;
+  publishedAt: string | null;
+  aiSummary: string;
+  financeNote: string | null;
+  sourceFile: string;
+  hasArtifact: boolean;
+};
 
 function dateOnly(value: string | Date): string {
   if (value instanceof Date) {
@@ -17,34 +38,89 @@ function dateTime(value: string | Date): string {
   return value;
 }
 
-export async function getLatestManualRows(cutoffDate: string, itemType: "non_listed" | "cash"): Promise<ManualValueRow[]> {
+export async function getSnapshotHistory(): Promise<SnapshotHistoryRow[]> {
   if (!dbEnabled()) return [];
-  const rows = await query<{
-    id: number; item_key: string; display_name: string; item_type: string; value_date: string;
-    value: string; holding_name: string | null; created_at: string;
-  }>(
-    `SELECT DISTINCT ON (mv.item_key)
+  const prisma = getPrisma();
+  const rows = await prisma.$queryRaw<Array<{
+    id: bigint;
+    as_of_date: Date;
+    publication_status: string;
+    portfolio_value: string | null;
+    holdings_count: number | null;
+    approved_by: string | null;
+    published_at: Date | null;
+    ai_summary: string;
+    finance_note: string | null;
+    source_file: string;
+    has_artifact: boolean;
+  }>>`
+    SELECT
+      s.id,
+      s.as_of_date,
+      s.publication_status,
+      (s.payload -> 'kpis' ->> 'totalPortfolioValue')::numeric AS portfolio_value,
+      jsonb_array_length(s.payload -> 'holdings') AS holdings_count,
+      s.approved_by,
+      s.published_at,
+      s.ai_summary,
+      s.finance_note,
+      s.source_file,
+      EXISTS (
+        SELECT 1 FROM portfolio_snapshot_artifacts a WHERE a.snapshot_id = s.id
+      ) AS has_artifact
+    FROM portfolio_snapshots s
+    WHERE s.as_of_date >= NOW() - INTERVAL '13 months'
+      AND COALESCE(s.source_file, '') NOT ILIKE 'CEO tracker context:%'
+    ORDER BY s.as_of_date DESC, s.created_at DESC
+  `;
+  return rows.map((r) => ({
+    id: Number(r.id),
+    cutoffDate: dateOnly(r.as_of_date),
+    status: r.publication_status === "published" ? "published" : "draft",
+    portfolioValue: Number(r.portfolio_value ?? 0),
+    holdingsCount: Number(r.holdings_count ?? 0),
+    approvedBy: r.approved_by ?? null,
+    publishedAt: r.published_at ? dateTime(r.published_at) : null,
+    aiSummary: r.ai_summary ?? "",
+    financeNote: r.finance_note ?? null,
+    sourceFile: r.source_file ?? "",
+    hasArtifact: Boolean(r.has_artifact),
+  }));
+}
+
+export async function getLatestManualRows(itemType: "non_listed" | "cash"): Promise<ManualValueRow[]> {
+  if (!dbEnabled()) return [];
+  const prisma = getPrisma();
+  const rows = await prisma.$queryRaw<Array<{
+    id: bigint;
+    item_key: string;
+    display_name: string;
+    item_type: string;
+    value_date: Date;
+    value: string;
+    holding_name: string | null;
+    created_at: Date;
+  }>>`
+    SELECT DISTINCT ON (mv.item_key)
         mv.item_key,
         mv.id,
         d.display_name,
         CASE WHEN LOWER(d.item_type) = 'cash' THEN 'cash' ELSE 'non_listed' END AS item_type,
         mv.as_of_date AS value_date,
-        mv.value,
+        mv.value::text AS value,
         NULLIF(mv.notes, '') AS holding_name,
         mv.created_at
       FROM admin_manual_values mv
       JOIN asset_dictionary d ON d.item_key = mv.item_key
-      WHERE mv.as_of_date <= $1
-        AND d.active = TRUE
+      WHERE d.active = TRUE
         AND (
-          ($2 = 'cash' AND (LOWER(d.item_type) = 'cash' OR mv.item_key ILIKE 'cash%'))
-          OR ($2 = 'non_listed' AND LOWER(d.item_type) <> 'cash' AND mv.item_key NOT ILIKE 'cash%')
+          (${itemType} = 'cash' AND (LOWER(d.item_type) = 'cash' OR mv.item_key ILIKE 'cash%'))
+          OR (${itemType} = 'non_listed' AND LOWER(d.item_type) <> 'cash' AND mv.item_key NOT ILIKE 'cash%')
         )
-      ORDER BY mv.item_key, mv.as_of_date DESC, mv.created_at DESC`,
-    [cutoffDate, itemType]
-  );
+      ORDER BY mv.item_key, mv.as_of_date DESC, mv.created_at DESC
+  `;
   return rows.map((r) => ({
-    id: r.id,
+    id: Number(r.id),
     itemKey: r.item_key,
     displayName: r.display_name,
     itemType: r.item_type as "non_listed" | "cash",
@@ -55,45 +131,280 @@ export async function getLatestManualRows(cutoffDate: string, itemType: "non_lis
   }));
 }
 
+export async function getInvestorProfiles(): Promise<InvestorProfile[]> {
+  if (!dbEnabled()) return [];
+  const prisma = getPrisma();
+  const rows = await prisma.investor_profiles.findMany({
+    orderBy: [{ subscription_date: "asc" }, { name: "asc" }],
+  });
+  return rows.map((r) => ({
+    id: Number(r.id),
+    name: r.name,
+    investorType: r.investor_type,
+    capitalEur: r.capital_eur,
+    units: r.units,
+    subscriptionDate: dateOnly(r.subscription_date),
+    navUnitAtSub: r.nav_unit_at_sub,
+    active: r.active,
+    notes: r.notes,
+    createdAt: dateTime(r.created_at),
+    updatedAt: dateTime(r.updated_at),
+  }));
+}
+
+export type FixedPortfolioValues = {
+  privateParticipations: number;
+  privateLoanPrincipal: number;
+  cashOutsideDirecta: number;
+  cashOutsideDirectaSource: "manual" | "snapshot" | "none";
+  statementCash: number;
+  history: Array<{
+    asOfDate: string;
+    privateParticipations: number;
+    privateLoanPrincipal: number;
+    cashOutsideDirecta: number;
+    itemKeys: string[];
+  }>;
+};
+
+export type NonListedTransactionRow = {
+  id: number;
+  date: string;
+  tipo: "BUY" | "SELL";
+  investee: string;
+  currency: string;
+  amount: number;
+};
+
+export type PrivateLoanTransactionRow = {
+  id: number;
+  date: string;
+  tipo: "DISBURSEMENT" | "REPAYMENT";
+  counterparty: string;
+  currency: string;
+  amount: number;
+};
+
+function parseSnapshotPayload(value: unknown): PortfolioSnapshot | null {
+  if (!value) return null;
+  if (typeof value === "string") {
+    try { return JSON.parse(value) as PortfolioSnapshot; } catch { return null; }
+  }
+  return value as PortfolioSnapshot;
+}
+
+function getFrozenCashOutsideDirecta(value: unknown): number {
+  const snap = parseSnapshotPayload(value);
+  if (!snap) return 0;
+  if (snap.overlaySources?.cashFormula) {
+    return Number(snap.overlaySources.externalCash ?? Math.max(0, Number(snap.composition?.cash ?? 0) - Number(snap.directaCash ?? 0)));
+  }
+  const manualItems = snap.overlaySources?.manualItems ?? [];
+  const cashItems = manualItems.filter((item) => {
+    const itemType = item.item_type.toLowerCase();
+    return (
+      itemType === "cash" ||
+      item.item_key === "CASH_OUTSIDE_DIRECTA" ||
+      item.item_key === "TRACKER_EXTERNAL_CASH_DIFFERENCE"
+    );
+  });
+  if (cashItems.length > 0) return cashItems.reduce((sum, item) => sum + Number(item.value || 0), 0);
+  const externalCash = Number(snap.overlaySources?.externalCash ?? 0);
+  if (externalCash > 0) return externalCash;
+  const totalCash = Number(snap.composition?.cash ?? 0);
+  const statementCash = Number(snap.directaCash ?? 0);
+  return Math.max(0, totalCash - statementCash);
+}
+
+export async function getFixedPortfolioValues(): Promise<FixedPortfolioValues> {
+  const empty: FixedPortfolioValues = {
+    privateParticipations: 0, privateLoanPrincipal: 0,
+    cashOutsideDirecta: 0, cashOutsideDirectaSource: "none",
+    statementCash: 0, history: [],
+  };
+  if (!dbEnabled()) return empty;
+  const prisma = getPrisma();
+
+  const KEYS = ["PRIVATE_PARTICIPATIONS", "PRIVATE_LOAN_PRINCIPAL", "CASH_OUTSIDE_DIRECTA"];
+
+  const [latestRows, historyRows, snapRows] = await Promise.all([
+    prisma.$queryRaw<Array<{ item_key: string; value: string }>>`
+      SELECT DISTINCT ON (item_key) item_key, value::text AS value
+      FROM admin_manual_values
+      WHERE item_key = ANY(${KEYS}::text[])
+         OR item_key LIKE 'TRACKER_PARTICIPATION_%'
+         OR item_key LIKE 'TRACKER_LOAN_%'
+      ORDER BY item_key, as_of_date DESC, created_at DESC
+    `,
+    prisma.$queryRaw<Array<{ as_of_date: Date; item_key: string; value: string }>>`
+      SELECT as_of_date, item_key, value::text AS value
+      FROM (
+        SELECT DISTINCT ON (as_of_date, item_key)
+          as_of_date,
+          item_key,
+          value
+        FROM admin_manual_values
+        WHERE item_key = ANY(${KEYS}::text[])
+           OR item_key LIKE 'TRACKER_PARTICIPATION_%'
+           OR item_key LIKE 'TRACKER_LOAN_%'
+        ORDER BY as_of_date, item_key, created_at DESC, id DESC
+      ) latest_per_date
+      ORDER BY as_of_date ASC, item_key ASC
+    `,
+    prisma.$queryRaw<Array<{ direct_cash: string | null; payload: PortfolioSnapshot }>>`
+      SELECT
+        (payload ->> 'directaCash')::numeric AS direct_cash,
+        payload
+      FROM portfolio_snapshots
+      WHERE publication_status = 'published'
+        AND COALESCE(source_file, '') NOT ILIKE 'CEO tracker context:%'
+      ORDER BY as_of_date DESC, created_at DESC
+      LIMIT 1
+    `,
+  ]);
+
+  const byKey = new Map(latestRows.map((r) => [r.item_key, Number(r.value)]));
+  const detailedParticipationRows = latestRows.filter((r) => r.item_key.startsWith("TRACKER_PARTICIPATION_"));
+  const detailedLoanRows = latestRows.filter((r) => r.item_key.startsWith("TRACKER_LOAN_"));
+  const detailedParticipations = detailedParticipationRows.reduce((s, r) => s + Number(r.value), 0);
+  const detailedLoans = detailedLoanRows.reduce((s, r) => s + Number(r.value), 0);
+  const manualCashOutside = byKey.get("CASH_OUTSIDE_DIRECTA");
+  const frozenCashOutside = getFrozenCashOutsideDirecta(snapRows[0]?.payload);
+  const cashOutsideDirecta = manualCashOutside ?? frozenCashOutside;
+  const cashOutsideDirectaSource = manualCashOutside !== undefined
+    ? "manual"
+    : frozenCashOutside > 0 ? "snapshot" : "none";
+
+  const rowsByDate = new Map<string, typeof historyRows>();
+  for (const r of historyRows) {
+    const d = dateOnly(r.as_of_date);
+    rowsByDate.set(d, [...(rowsByDate.get(d) ?? []), r]);
+  }
+
+  const balancesByKey = new Map<string, number>();
+  const balanceHistory = [...rowsByDate.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([asOfDate, rows]) => {
+      const itemKeys = new Set<string>();
+      for (const row of rows) {
+        balancesByKey.set(row.item_key, Number(row.value));
+        itemKeys.add(row.item_key);
+      }
+      const dParticipations = [...balancesByKey.entries()]
+        .filter(([key]) => key.startsWith("TRACKER_PARTICIPATION_"))
+        .reduce((sum, [, v]) => sum + v, 0);
+      const dLoans = [...balancesByKey.entries()]
+        .filter(([key]) => key.startsWith("TRACKER_LOAN_"))
+        .reduce((sum, [, v]) => sum + v, 0);
+      return {
+        asOfDate,
+        privateParticipations: dParticipations > 0 ? dParticipations : balancesByKey.get("PRIVATE_PARTICIPATIONS") ?? 0,
+        privateLoanPrincipal: dLoans > 0 ? dLoans : balancesByKey.get("PRIVATE_LOAN_PRINCIPAL") ?? 0,
+        cashOutsideDirecta: balancesByKey.get("CASH_OUTSIDE_DIRECTA") ?? 0,
+        itemKeys: [...itemKeys],
+      };
+    });
+
+  return {
+    privateParticipations: detailedParticipationRows.length > 0 ? detailedParticipations : byKey.get("PRIVATE_PARTICIPATIONS") ?? 0,
+    privateLoanPrincipal: detailedLoanRows.length > 0 ? detailedLoans : byKey.get("PRIVATE_LOAN_PRINCIPAL") ?? 0,
+    cashOutsideDirecta,
+    cashOutsideDirectaSource,
+    statementCash: Number(snapRows[0]?.direct_cash ?? 0),
+    history: balanceHistory.sort((a, b) => b.asOfDate.localeCompare(a.asOfDate)).slice(0, 24),
+  };
+}
+
+export async function getNonListedTransactions(): Promise<NonListedTransactionRow[]> {
+  if (!dbEnabled()) return [];
+  const prisma = getPrisma();
+  const rows = await prisma.non_listed_transactions.findMany({
+    orderBy: [{ transaction_date: "desc" }, { created_at: "desc" }],
+    take: 100,
+  });
+  return rows.map((r) => ({
+    id: Number(r.id),
+    date: dateOnly(r.transaction_date),
+    tipo: r.tipo === "SELL" ? "SELL" : "BUY",
+    investee: r.investee,
+    currency: r.currency,
+    amount: r.amount,
+  }));
+}
+
+export async function getPrivateLoanTransactions(): Promise<PrivateLoanTransactionRow[]> {
+  if (!dbEnabled()) return [];
+  const prisma = getPrisma();
+  const rows = await prisma.private_loan_transactions.findMany({
+    orderBy: [{ transaction_date: "desc" }, { created_at: "desc" }],
+    take: 100,
+  });
+  return rows.map((r) => ({
+    id: Number(r.id),
+    date: dateOnly(r.transaction_date),
+    tipo: r.tipo === "REPAYMENT" ? "REPAYMENT" : "DISBURSEMENT",
+    counterparty: r.counterparty,
+    currency: r.currency,
+    amount: r.amount,
+  }));
+}
+
 export async function getAdminData(): Promise<AdminData> {
   if (!dbEnabled()) {
     return { dictionary: [], manualValues: [], controls: [] };
   }
+  const prisma = getPrisma();
 
   const [dictRows, valRows, ctrlRows] = await Promise.all([
-    query<{
-      id: number; item_key: string; display_name: string; item_type: string;
-      subcategory: string | null; currency: string; sort_order: number;
-    }>(`SELECT
-          ROW_NUMBER() OVER (ORDER BY sort_order, item_key)::int AS id,
-          item_key,
-          display_name,
-          CASE WHEN LOWER(item_type) = 'cash' THEN 'cash' ELSE 'non_listed' END AS item_type,
-          subcategory,
-          currency,
-          sort_order
-        FROM asset_dictionary
-        WHERE active = TRUE
-        ORDER BY sort_order, display_name`),
-    query<{
-      id: number; item_key: string; display_name: string; item_type: string; value_date: string;
-      value: string; holding_name: string | null; created_at: string;
-    }>(`SELECT
-          mv.id,
-          mv.item_key,
-          d.display_name,
-          CASE WHEN LOWER(d.item_type) = 'cash' THEN 'cash' ELSE 'non_listed' END AS item_type,
-          mv.as_of_date AS value_date,
-          mv.value,
-          NULLIF(mv.notes, '') AS holding_name,
-          mv.created_at
-        FROM admin_manual_values mv
-        JOIN asset_dictionary d ON d.item_key = mv.item_key
-        ORDER BY mv.as_of_date DESC, mv.id DESC
-        LIMIT 200`),
-    query<{ id: number; as_of_date: string; capital_committed: string; created_at: string }>(
-      "SELECT * FROM admin_controls ORDER BY as_of_date DESC LIMIT 50"
-    ),
+    prisma.$queryRaw<Array<{
+      id: number;
+      item_key: string;
+      display_name: string;
+      item_type: string;
+      subcategory: string | null;
+      currency: string;
+      sort_order: number;
+    }>>`
+      SELECT
+        ROW_NUMBER() OVER (ORDER BY sort_order, item_key)::int AS id,
+        item_key,
+        display_name,
+        CASE WHEN LOWER(item_type) = 'cash' THEN 'cash' ELSE 'non_listed' END AS item_type,
+        subcategory,
+        currency,
+        sort_order
+      FROM asset_dictionary
+      WHERE active = TRUE
+      ORDER BY sort_order, display_name
+    `,
+    prisma.$queryRaw<Array<{
+      id: bigint;
+      item_key: string;
+      display_name: string;
+      item_type: string;
+      value_date: Date;
+      value: string;
+      holding_name: string | null;
+      created_at: Date;
+    }>>`
+      SELECT
+        mv.id,
+        mv.item_key,
+        d.display_name,
+        CASE WHEN LOWER(d.item_type) = 'cash' THEN 'cash' ELSE 'non_listed' END AS item_type,
+        mv.as_of_date AS value_date,
+        mv.value::text AS value,
+        NULLIF(mv.notes, '') AS holding_name,
+        mv.created_at
+      FROM admin_manual_values mv
+      JOIN asset_dictionary d ON d.item_key = mv.item_key
+      ORDER BY mv.as_of_date DESC, mv.id DESC
+      LIMIT 200
+    `,
+    prisma.admin_controls.findMany({
+      orderBy: [{ as_of_date: "desc" }],
+      take: 50,
+    }),
   ]);
 
   return {
@@ -107,7 +418,7 @@ export async function getAdminData(): Promise<AdminData> {
       sortOrder: r.sort_order,
     })),
     manualValues: valRows.map((r) => ({
-      id: r.id,
+      id: Number(r.id),
       itemKey: r.item_key,
       displayName: r.display_name,
       itemType: r.item_type as "non_listed" | "cash",
@@ -117,9 +428,9 @@ export async function getAdminData(): Promise<AdminData> {
       createdAt: dateTime(r.created_at),
     })),
     controls: ctrlRows.map((r) => ({
-      id: r.id,
+      id: Number(r.id),
       asOfDate: dateOnly(r.as_of_date),
-      capitalCommitted: Number(r.capital_committed),
+      capitalCommitted: r.capital_committed,
       createdAt: dateTime(r.created_at),
     })),
   };

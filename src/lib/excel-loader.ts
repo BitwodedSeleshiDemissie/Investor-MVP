@@ -2,6 +2,19 @@ import * as XLSX from "xlsx";
 import path from "path";
 import fs from "fs";
 
+export interface InvestorPerfRow {
+  name: string;
+  type: string;
+  subscriptionDate: Date;
+  capitalEur: number;
+  units: number;
+  yearsElapsed: number;
+  navUnitAtSub: number;
+  currentValueEur: number;
+  moic: number;
+  irrAnnualized: number;
+}
+
 export interface WorkbookData {
   tradeLog: TradeRow[];
   holdings: HoldingRow[];
@@ -10,6 +23,18 @@ export interface WorkbookData {
   irrPortfolio: CashFlowRow[];
   monthlyReturns: MonthlyReturnRow[];
   cutoffDate: Date;
+  investorPerformance: InvestorPerfRow[];
+  manualItems?: WorkbookManualItem[];
+}
+
+export interface WorkbookManualItem {
+  itemKey: string;
+  displayName: string;
+  itemType: "Non-Listed" | "Cash";
+  subcategory: string;
+  value: number;
+  notes: string;
+  sortOrder: number;
 }
 
 export interface TradeRow {
@@ -49,9 +74,11 @@ export interface MonthlyReturnRow {
   cumulativeReturn?: number;
 }
 
-export const INCOME_TYPES = new Set(["Dividend", "Coupon", "Distribution", "Sec. Lending", "Income"]);
+export const INCOME_TYPES = new Set([
+  "DIVIDEND", "INTEREST", "ETF_INCOME", "COUPON", "LOAN_INT", "OTHER",
+  "Dividend", "Coupon", "Distribution", "Sec. Lending", "Income",
+]);
 export const INVESTOR_FLOW_TYPES = new Set(["Deposit", "Withdrawal"]);
-const NON_TRADE_TYPES = new Set(["Balance", "Tax"]);
 
 function toDate(val: unknown): Date | null {
   if (!val) return null;
@@ -70,49 +97,480 @@ function toDate(val: unknown): Date | null {
 function toNum(val: unknown): number {
   if (typeof val === "number") return val;
   if (typeof val === "string") {
-    const n = parseFloat(val.replace(/[€\s]/g, "").replace(",", "."));
+    const n = parseFloat(val.replace(/[€\s%]/g, "").replace(",", "."));
     return isNaN(n) ? 0 : n;
   }
   return 0;
 }
 
-// Read headers + data rows keyed by column name — matches pandas header=N (0-based)
-function sheetToRows(ws: XLSX.WorkSheet, headerRowIdx: number): Record<string, unknown>[] {
-  const range = XLSX.utils.decode_range(ws["!ref"] ?? "A1");
-  const headers: string[] = [];
-  for (let c = range.s.c; c <= range.e.c; c++) {
-    const cell = ws[XLSX.utils.encode_cell({ r: headerRowIdx, c })];
-    headers.push(cell?.v?.toString().trim() ?? `col_${c}`);
-  }
-  const rows: Record<string, unknown>[] = [];
-  for (let r = headerRowIdx + 1; r <= range.e.r; r++) {
-    const row: Record<string, unknown> = {};
-    for (let c = range.s.c; c <= range.e.c; c++) {
-      const cell = ws[XLSX.utils.encode_cell({ r, c })];
-      row[headers[c - range.s.c]] = cell?.v ?? null;
-    }
-    rows.push(row);
-  }
-  return rows;
+function cellVal(ws: XLSX.WorkSheet, r: number, c: number): unknown {
+  return ws[XLSX.utils.encode_cell({ r, c })]?.v ?? null;
 }
 
-// Read data rows by column position — matches pandas with explicit df.columns rename
-function sheetToPositionalRows(ws: XLSX.WorkSheet, headerRowIdx: number): unknown[][] {
-  const range = XLSX.utils.decode_range(ws["!ref"] ?? "A1");
-  const rows: unknown[][] = [];
-  for (let r = headerRowIdx + 1; r <= range.e.r; r++) {
-    const cols: unknown[] = [];
-    for (let c = range.s.c; c <= range.e.c; c++) {
-      const cell = ws[XLSX.utils.encode_cell({ r, c })];
-      cols.push(cell?.v ?? null);
-    }
-    rows.push(cols);
-  }
-  return rows;
+function findSheet(wb: XLSX.WorkBook, fragment: string): XLSX.WorkSheet | null {
+  const name = wb.SheetNames.find((n) => n.toLowerCase().includes(fragment.toLowerCase()));
+  return name ? wb.Sheets[name] : null;
 }
 
-function findSheetName(wb: XLSX.WorkBook, pattern: string): string | undefined {
-  return wb.SheetNames.find((n) => n.toLowerCase().includes(pattern.toLowerCase()));
+function inferAssetClass(name: string): string {
+  const n = name.toUpperCase();
+  if (n.includes("ETP") || n.includes("BITCOIN") || n.includes("CRYPTO")) return "Crypto ETPs";
+  if (
+    n.includes("ETF") ||
+    n.includes("UCITS") ||
+    n.includes("ISHARES") ||
+    n.includes("WISDOMTREE") ||
+    n.includes("AMUNDI") ||
+    n.includes("XTRACKERS") ||
+    n.includes("INVESCO")
+  ) return "ETFs / ETCs";
+  if (
+    n.includes(" %") ||
+    n.includes("FINANCE") ||
+    n.includes("CEDOLA") ||
+    n.includes("COUPON") ||
+    n.includes("ZERO COUPON") ||
+    n.includes("BOT ") ||
+    n.includes("BTP ") ||
+    n.includes("CCT ") ||
+    n.includes("BUND") ||
+    n.match(/\d+\.\d+%/)
+  ) return "Bonds";
+  return "Stocks";
+}
+
+function slugKey(value: string): string {
+  const slug = value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return slug || "ITEM";
+}
+
+function numericCell(ws: XLSX.WorkSheet, r: number, c: number): number | null {
+  const value = cellVal(ws, r, c);
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = toNum(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function signedWorkbookAmount(type: string, amount: number): number {
+  const normalized = type.toUpperCase();
+  if (
+    normalized.includes("SELL") ||
+    normalized.includes("REPAY") ||
+    normalized.includes("RIMBORS") ||
+    normalized.includes("REDEMPTION")
+  ) {
+    return -Math.abs(amount);
+  }
+  return Math.abs(amount);
+}
+
+function parseWorkbook(wb: XLSX.WorkBook): WorkbookData {
+
+  // ── 01_Assumptions ────────────────────────────────────────────────────────
+  const assumSheet = findSheet(wb, "01_Assumptions") ?? findSheet(wb, "Assumptions");
+  let cutoffDate = new Date();
+  let riskFreeFromSheet = 0.03;
+  if (assumSheet) {
+    const todayVal = toDate(cellVal(assumSheet, 5, 1)); // B6
+    if (todayVal) cutoffDate = todayVal;
+    const rf = toNum(cellVal(assumSheet, 6, 1)); // B7
+    if (rf > 0) riskFreeFromSheet = rf;
+  }
+
+  // ── 11_Performance — pre-computed KPIs ───────────────────────────────────
+  const perfSheet = findSheet(wb, "11_Performance") ?? findSheet(wb, "Performance");
+  const perfMetrics: Record<string, number | string> = {};
+  const irrInvestor: CashFlowRow[] = [];
+
+  if (perfSheet) {
+    const range = XLSX.utils.decode_range(perfSheet["!ref"] ?? "A1");
+    for (let r = range.s.r; r <= range.e.r; r++) {
+      const key = perfSheet[XLSX.utils.encode_cell({ r, c: 0 })]?.v?.toString().trim();
+      const valCell = perfSheet[XLSX.utils.encode_cell({ r, c: 1 })];
+      if (key && valCell?.v !== undefined && valCell?.v !== null) {
+        perfMetrics[key] = valCell.v;
+      }
+      const cfDate = toDate(perfSheet[XLSX.utils.encode_cell({ r, c: 3 })]?.v);
+      const cfAmt = toNum(perfSheet[XLSX.utils.encode_cell({ r, c: 4 })]?.v);
+      if (cfDate && cfAmt !== 0) {
+        irrInvestor.push({ date: cfDate, cashFlow: cfAmt });
+      }
+    }
+  }
+
+  function pm11(fragment: string): number {
+    const key = Object.keys(perfMetrics).find((k) => k.includes(fragment));
+    return key ? toNum(perfMetrics[key]) : 0;
+  }
+
+  const navTotale        = pm11("NAV TOTALE");
+  const capitaleRaccolto = pm11("Capitale Raccolto");
+  const listedNetTrade   = pm11("Net Trade Cum");
+  const divIntCum        = pm11("Div/Int Lordi Cum.");
+  const partNetCum       = pm11("Part. Net Cum");
+  const loanNetCum       = pm11("Loan Net Cum");
+  const operatingPnlCum  = pm11("P/L Operativa Cum.");
+  const listedMvEur      = pm11("Listed MV EUR");
+  const partMvEur        = pm11("Partecipazioni MV EUR");
+  const prestitiEur      = pm11("Prestiti Outstanding");
+  const cassaEur         = pm11("Cassa EUR");
+  const navUnit          = pm11("NAV/Unit Corrente");
+  const quoteOutst       = pm11("Quote Outstanding");
+  const moicValue        = pm11("MOIC (Multiple");
+  const returnTotale     = pm11("Return Totale %");
+  const irrXirr          = pm11("IRR (XIRR");
+  const cagr             = pm11("CAGR Time-Weighted");
+  const volatility       = pm11("Volatilit");
+  const sharpe           = pm11("Sharpe Ratio");
+  const sortino          = pm11("Sortino Ratio");
+  const maxDrawdown      = pm11("Max Drawdown");
+  const mesiPositivi     = pm11("# Mesi Positivi");
+  const mesiTotali       = pm11("# Mesi Totali");
+  const winRate          = pm11("Win Rate");
+
+  const portfolioMetrics: Record<string, number | string> = {
+    "Total Portfolio Value":    navTotale,
+    "NAV":                      navTotale,
+    "Capital Committed":        capitaleRaccolto,
+    "Listed Net Trade Cost":    listedNetTrade,
+    "Total Income":             divIntCum,
+    "Total Distributions":      divIntCum,
+    "Participation Net Cost":   partNetCum,
+    "Loan Net Principal":       loanNetCum,
+    "Operating P&L":            operatingPnlCum,
+    "Listed Market Value":      listedMvEur,
+    "Non-Listed Total":         partMvEur + prestitiEur,
+    "Non-Listed Value":         partMvEur + prestitiEur,
+    "Loans Outstanding":        prestitiEur,
+    "Total Cash":               cassaEur,
+    "Cash":                     cassaEur,
+    "Investor IRR":             irrXirr,
+    "Fund IRR":                 irrXirr,
+    "Annualized Return (TWR)":  cagr,
+    "MOIC Precomputed":         moicValue,
+    "Return Total":             returnTotale,
+    "Sharpe Ratio Precomputed": sharpe,
+    "Sortino Ratio":            sortino,
+    "Volatility Annualized":    volatility,
+    "Max Drawdown Precomputed": maxDrawdown,
+    "Months Positive":          mesiPositivi,
+    "Months Total":             mesiTotali,
+    "Win Rate":                 winRate,
+    "NAV Unit":                 navUnit,
+    "Units Outstanding":        quoteOutst,
+    "Risk Free Rate":           riskFreeFromSheet,
+    "Unrealized P&L":           0,
+    "Realized P&L":             0,
+    "Net Total P&L":            navTotale - capitaleRaccolto,
+  };
+  const manualItems: WorkbookManualItem[] = [];
+
+  // ── 05_Dividendi_Interessi — income events ────────────────────────────────
+  const divSheet = findSheet(wb, "05_Dividendi") ?? findSheet(wb, "Dividendi");
+  const tradeLog: TradeRow[] = [];
+
+  if (divSheet) {
+    const range = XLSX.utils.decode_range(divSheet["!ref"] ?? "A1");
+    for (let r = 4; r <= range.e.r; r++) {
+      const idVal = cellVal(divSheet, r, 0);
+      if (!idVal && idVal !== 0) continue;
+      const d = toDate(cellVal(divSheet, r, 1));
+      const tipo = cellVal(divSheet, r, 2)?.toString().trim() ?? "";
+      const strumento = cellVal(divSheet, r, 3)?.toString() ?? "";
+      const amtEur = toNum(cellVal(divSheet, r, 8));
+      if (!d || !tipo || amtEur === 0) continue;
+      tradeLog.push({
+        date: d,
+        security: strumento,
+        assetClass: "Income",
+        currency: cellVal(divSheet, r, 5)?.toString() ?? "EUR",
+        type: tipo,
+        shares: 0,
+        price: 0,
+        netAmount: amtEur,
+      });
+    }
+  }
+
+  // ── 09_Posizioni — listed holdings ───────────────────────────────────────
+  const partSheet = findSheet(wb, "06_Partecipazioni") ?? findSheet(wb, "Partecipazioni");
+  if (partSheet) {
+    const range = XLSX.utils.decode_range(partSheet["!ref"] ?? "A1");
+    const hasCurrentValues = Array.from({ length: Math.max(0, range.e.r - 3) }).some((_, idx) =>
+      numericCell(partSheet, idx + 4, 9) !== null
+    );
+    const grouped = new Map<string, { displayName: string; value: number }>();
+
+    for (let r = 4; r <= range.e.r; r++) {
+      const investee = cellVal(partSheet, r, 3)?.toString().trim();
+      if (!investee) continue;
+      const type = cellVal(partSheet, r, 2)?.toString().trim() ?? "";
+      const amountEur = numericCell(partSheet, r, 8) ?? 0;
+      const currentValue = numericCell(partSheet, r, 9);
+      const value = hasCurrentValues
+        ? currentValue ?? 0
+        : signedWorkbookAmount(type, amountEur);
+      if (value === 0) continue;
+      const key = slugKey(investee);
+      const current = grouped.get(key) ?? { displayName: investee, value: 0 };
+      current.value += value;
+      grouped.set(key, current);
+    }
+
+    let order = 10;
+    for (const [key, row] of grouped) {
+      if (row.value <= 0) continue;
+      manualItems.push({
+        itemKey: `TRACKER_PARTICIPATION_${key}`,
+        displayName: row.displayName,
+        itemType: "Non-Listed",
+        subcategory: "Participation",
+        value: row.value,
+        notes: "Seeded from CEO tracker sheet 06_Partecipazioni",
+        sortOrder: order,
+      });
+      order += 10;
+    }
+  }
+
+  const loanSheet = findSheet(wb, "07_Prestiti") ?? findSheet(wb, "Prestiti");
+  if (loanSheet) {
+    const range = XLSX.utils.decode_range(loanSheet["!ref"] ?? "A1");
+    const hasOutstandingOverrides = Array.from({ length: Math.max(0, range.e.r - 3) }).some((_, idx) =>
+      numericCell(loanSheet, idx + 4, 8) !== null
+    );
+    const grouped = new Map<string, { displayName: string; value: number }>();
+
+    for (let r = 4; r <= range.e.r; r++) {
+      const counterparty = cellVal(loanSheet, r, 3)?.toString().trim();
+      if (!counterparty) continue;
+      const type = cellVal(loanSheet, r, 2)?.toString().trim() ?? "";
+      const amountEur = numericCell(loanSheet, r, 7) ?? 0;
+      const override = numericCell(loanSheet, r, 8);
+      const value = hasOutstandingOverrides
+        ? override ?? 0
+        : signedWorkbookAmount(type, amountEur);
+      if (value === 0) continue;
+      const key = slugKey(counterparty);
+      const current = grouped.get(key) ?? { displayName: counterparty, value: 0 };
+      current.value += value;
+      grouped.set(key, current);
+    }
+
+    let order = 100;
+    for (const [key, row] of grouped) {
+      if (row.value <= 0) continue;
+      manualItems.push({
+        itemKey: `TRACKER_LOAN_${key}`,
+        displayName: row.displayName,
+        itemType: "Non-Listed",
+        subcategory: "Private Loan",
+        value: row.value,
+        notes: "Seeded from CEO tracker sheet 07_Prestiti",
+        sortOrder: order,
+      });
+      order += 10;
+    }
+  }
+
+  const posSheet = findSheet(wb, "09_Posizioni") ?? findSheet(wb, "Posizioni");
+  const holdings: HoldingRow[] = [];
+  let totalListedMv = listedMvEur || 1;
+
+  if (posSheet) {
+    const range = XLSX.utils.decode_range(posSheet["!ref"] ?? "A1");
+    const rawPositions: HoldingRow[] = [];
+    let sumMv = 0;
+    for (let r = 4; r <= range.e.r; r++) {
+      const isin = cellVal(posSheet, r, 1)?.toString().trim();
+      if (!isin) continue;
+      const nome = cellVal(posSheet, r, 2)?.toString().trim() ?? isin;
+      const valuta = cellVal(posSheet, r, 3)?.toString().trim() ?? "EUR";
+      const qtyNetta = toNum(cellVal(posSheet, r, 6));
+      if (qtyNetta <= 0) continue;
+
+      const lastPrice = toNum(cellVal(posSheet, r, 7));
+      const fxToEur = toNum(cellVal(posSheet, r, 8)) || 1;
+      const mvLastTrade = toNum(cellVal(posSheet, r, 10));
+      const costoMedio = toNum(cellVal(posSheet, r, 11));
+      const spotPrice = toNum(cellVal(posSheet, r, 13));
+      const mvSpot = toNum(cellVal(posSheet, r, 14));
+      const mvEur = mvSpot > 0 ? mvSpot : mvLastTrade;
+      const currentPriceEur = spotPrice > 0 ? spotPrice * fxToEur : lastPrice * fxToEur;
+
+      const costBasis = qtyNetta * costoMedio;
+      const pnlEur = mvEur - costBasis;
+      const pnlPct = costBasis > 0 ? pnlEur / costBasis : 0;
+      sumMv += mvEur;
+
+      rawPositions.push({
+        security: nome,
+        assetClass: inferAssetClass(nome),
+        currency: valuta,
+        shares: qtyNetta,
+        avgCost: costoMedio,
+        costBasis,
+        currentPrice: currentPriceEur,
+        marketValue: mvEur,
+        unrealizedPnl: pnlEur,
+        pnlPct,
+        weight: 0,
+      });
+    }
+    if (sumMv > 0) totalListedMv = sumMv;
+    for (const h of rawPositions) {
+      h.weight = totalListedMv > 0 ? h.marketValue / totalListedMv : 0;
+      holdings.push(h);
+    }
+  }
+
+  // ── 10_NAV_Mensile — monthly NAV series ──────────────────────────────────
+  const navSheet = findSheet(wb, "10_NAV_Mensile") ?? findSheet(wb, "NAV_Mensile");
+  const monthlyReturns: MonthlyReturnRow[] = [];
+
+  if (navSheet) {
+    const range = XLSX.utils.decode_range(navSheet["!ref"] ?? "A1");
+    const rawNav: { monthEnd: Date; nav: number; navUnit: number }[] = [];
+
+    for (let r = 4; r <= range.e.r; r++) {
+      const d = toDate(cellVal(navSheet, r, 1));
+      const nav = toNum(cellVal(navSheet, r, 12));
+      const quoteOuts = toNum(cellVal(navSheet, r, 13));
+      const navPerUnit = toNum(cellVal(navSheet, r, 14));
+      if (!d || nav <= 0 || quoteOuts <= 0) continue;
+      rawNav.push({ monthEnd: d, nav, navUnit: navPerUnit });
+    }
+    rawNav.sort((a, b) => a.monthEnd.getTime() - b.monthEnd.getTime());
+
+    for (let i = 0; i < rawNav.length; i++) {
+      const curr = rawNav[i];
+      const prev = rawNav[i - 1];
+      const monthlyReturn = prev && prev.navUnit > 0 ? curr.navUnit / prev.navUnit - 1 : 0;
+      monthlyReturns.push({ monthEnd: curr.monthEnd, nav: curr.nav, monthlyReturn });
+    }
+  }
+
+  if (monthlyReturns.length > 0) {
+    const lastNavDate = monthlyReturns[monthlyReturns.length - 1].monthEnd;
+    if (cutoffDate < lastNavDate) cutoffDate = lastNavDate;
+  }
+
+  // ── 12_Perf_Investitori — per-investor performance ────────────────────────
+  const perfInvSheet = findSheet(wb, "12_Perf_Investitori") ?? findSheet(wb, "Perf_Investitori");
+  const investorPerformance: InvestorPerfRow[] = [];
+
+  if (perfInvSheet) {
+    const range = XLSX.utils.decode_range(perfInvSheet["!ref"] ?? "A1");
+    for (let r = 4; r <= range.e.r; r++) {
+      const name = cellVal(perfInvSheet, r, 1)?.toString().trim();
+      if (!name || name === "0") continue;
+      const d = toDate(cellVal(perfInvSheet, r, 3));
+      if (!d) continue;
+      investorPerformance.push({
+        name,
+        type: cellVal(perfInvSheet, r, 2)?.toString() ?? "LP",
+        subscriptionDate: d,
+        capitalEur: toNum(cellVal(perfInvSheet, r, 4)),
+        units: toNum(cellVal(perfInvSheet, r, 5)),
+        yearsElapsed: toNum(cellVal(perfInvSheet, r, 6)),
+        navUnitAtSub: toNum(cellVal(perfInvSheet, r, 7)),
+        currentValueEur: toNum(cellVal(perfInvSheet, r, 8)),
+        moic: toNum(cellVal(perfInvSheet, r, 9)),
+        irrAnnualized: toNum(cellVal(perfInvSheet, r, 10)),
+      });
+    }
+  }
+
+  // ── Fallback: Audit workbook format (produced by buildAuditWorkbookBuffer) ──────
+  // When the original CEO Excel sheets (09_Posizioni, 05_Dividendi, 10_NAV_Mensile)
+  // are absent, try the audit-format equivalents so the workbook round-trips cleanly.
+
+  if (holdings.length === 0) {
+    const auditHoldings = findSheet(wb, "Holdings");
+    if (auditHoldings) {
+      const cdVal = toDate(cellVal(auditHoldings, 2, 6));
+      if (cdVal) cutoffDate = cdVal;
+      const range = XLSX.utils.decode_range(auditHoldings["!ref"] ?? "A1");
+      for (let r = 5; r <= range.e.r; r++) {
+        const security = cellVal(auditHoldings, r, 0)?.toString().trim();
+        if (!security) continue;
+        holdings.push({
+          security,
+          assetClass: cellVal(auditHoldings, r, 1)?.toString() ?? "",
+          currency: cellVal(auditHoldings, r, 2)?.toString() ?? "EUR",
+          shares: toNum(cellVal(auditHoldings, r, 3)),
+          avgCost: toNum(cellVal(auditHoldings, r, 4)),
+          costBasis: toNum(cellVal(auditHoldings, r, 5)),
+          currentPrice: toNum(cellVal(auditHoldings, r, 6)),
+          marketValue: toNum(cellVal(auditHoldings, r, 7)),
+          unrealizedPnl: toNum(cellVal(auditHoldings, r, 8)),
+          pnlPct: toNum(cellVal(auditHoldings, r, 9)),
+          weight: toNum(cellVal(auditHoldings, r, 10)),
+        });
+      }
+    }
+  }
+
+  if (tradeLog.length === 0) {
+    const auditTrades = findSheet(wb, "Trade Log");
+    if (auditTrades) {
+      const range = XLSX.utils.decode_range(auditTrades["!ref"] ?? "A1");
+      for (let r = 3; r <= range.e.r; r++) {
+        const d = toDate(cellVal(auditTrades, r, 0));
+        const type = cellVal(auditTrades, r, 5)?.toString().trim() ?? "";
+        if (!d || !type) continue;
+        tradeLog.push({
+          date: d,
+          security: cellVal(auditTrades, r, 2)?.toString().trim() ?? "",
+          assetClass: cellVal(auditTrades, r, 3)?.toString() ?? "",
+          currency: cellVal(auditTrades, r, 4)?.toString() ?? "EUR",
+          type,
+          shares: toNum(cellVal(auditTrades, r, 6)),
+          price: toNum(cellVal(auditTrades, r, 7)),
+          netAmount: toNum(cellVal(auditTrades, r, 10)),
+        });
+      }
+    }
+  }
+
+  if (monthlyReturns.length === 0) {
+    const auditMonthly = findSheet(wb, "Monthly Returns");
+    if (auditMonthly) {
+      const range = XLSX.utils.decode_range(auditMonthly["!ref"] ?? "A1");
+      const rawRows: { monthEnd: Date; nav: number; monthlyReturn: number }[] = [];
+      for (let r = 5; r <= range.e.r; r++) {
+        const d = toDate(cellVal(auditMonthly, r, 0));
+        const nav = toNum(cellVal(auditMonthly, r, 1));
+        if (!d || nav <= 0) continue;
+        rawRows.push({ monthEnd: d, nav, monthlyReturn: toNum(cellVal(auditMonthly, r, 4)) });
+      }
+      rawRows.sort((a, b) => a.monthEnd.getTime() - b.monthEnd.getTime());
+      for (const row of rawRows) {
+        monthlyReturns.push({ monthEnd: row.monthEnd, nav: row.nav, monthlyReturn: row.monthlyReturn });
+      }
+      if (monthlyReturns.length > 0) {
+        const lastDate = monthlyReturns[monthlyReturns.length - 1].monthEnd;
+        if (cutoffDate < lastDate) cutoffDate = lastDate;
+      }
+    }
+  }
+
+  return {
+    tradeLog,
+    holdings,
+    portfolioMetrics,
+    irrInvestor,
+    irrPortfolio: [],
+    monthlyReturns,
+    cutoffDate,
+    investorPerformance,
+    manualItems,
+  };
 }
 
 export function loadWorkbook(filePath: string): WorkbookData {
@@ -121,133 +579,10 @@ export function loadWorkbook(filePath: string): WorkbookData {
     throw new Error(`Workbook not found at: ${resolved}`);
   }
   const wb = XLSX.readFile(resolved, { cellDates: false, cellNF: false });
+  return parseWorkbook(wb);
+}
 
-  // ── Portfolio Metrics ──────────────────────────────────────────────────────
-  // Matches Python: reads col 0→1 (left block) AND col 3→4 (right block)
-  const pmSheet = wb.Sheets[findSheetName(wb, "Portfolio Metrics") ?? wb.SheetNames[0]];
-  const portfolioMetrics: Record<string, number | string> = {};
-  if (pmSheet) {
-    const range = XLSX.utils.decode_range(pmSheet["!ref"] ?? "A1");
-    for (let r = range.s.r; r <= range.e.r; r++) {
-      // Left block: col A (0) → col B (1)
-      const keyA = pmSheet[XLSX.utils.encode_cell({ r, c: 0 })];
-      const valA = pmSheet[XLSX.utils.encode_cell({ r, c: 1 })];
-      if (keyA?.v && valA?.v !== undefined && valA?.v !== null) {
-        portfolioMetrics[keyA.v.toString().trim()] = valA.v;
-      }
-      // Right block: col D (3) → col E (4)
-      const keyD = pmSheet[XLSX.utils.encode_cell({ r, c: 3 })];
-      const valE = pmSheet[XLSX.utils.encode_cell({ r, c: 4 })];
-      if (keyD?.v && valE?.v !== undefined && valE?.v !== null) {
-        portfolioMetrics[keyD.v.toString().trim()] = valE.v;
-      }
-    }
-  }
-
-  // ── Holdings ───────────────────────────────────────────────────────────────
-  // Python: header=4 (0-based) = Excel row 5; cutoff at iloc[2,6] = G3
-  // Uses positional columns: Security=0, AssetClass=1, Currency=2, Shares=3,
-  // AvgCost=4, CostBasis=5, Price=6, MarketValue=7, UnrealPnl=8, PnlPct=9, Weight=10
-  const holdingsSheet = wb.Sheets[findSheetName(wb, "Holdings") ?? ""];
-  const holdings: HoldingRow[] = [];
-  let cutoffDate = new Date();
-  if (holdingsSheet) {
-    // Cutoff date at G3 (row index 2, col index 6)
-    const cutoffCell = holdingsSheet[XLSX.utils.encode_cell({ r: 2, c: 6 })]
-      ?? holdingsSheet["G3"]
-      ?? holdingsSheet["H3"];
-    const cd = toDate(cutoffCell?.v);
-    if (cd) cutoffDate = cd;
-
-    const rows = sheetToPositionalRows(holdingsSheet, 4); // header at row index 4 = Excel row 5
-    for (const row of rows) {
-      const security = row[0]?.toString().trim() ?? "";
-      if (!security || security.toUpperCase() === "TOTAL" || security === "Security") continue;
-      // pnlPct and weight are already decimals (0.0525 = 5.25%) — do NOT divide by 100
-      holdings.push({
-        security,
-        assetClass: row[1]?.toString().trim() ?? "Unknown",
-        currency: row[2]?.toString().trim() ?? "EUR",
-        shares: toNum(row[3]),
-        avgCost: toNum(row[4]),
-        costBasis: toNum(row[5]),
-        currentPrice: toNum(row[6]),
-        marketValue: toNum(row[7]),
-        unrealizedPnl: toNum(row[8]),
-        pnlPct: toNum(row[9]),   // already a decimal fraction
-        weight: toNum(row[10]),  // already a decimal fraction
-      });
-    }
-  }
-
-  // ── Trade Log ──────────────────────────────────────────────────────────────
-  // Python: header=2 (0-based) = Excel row 3
-  // Columns: Date, Settlement, Security, Asset Class, Currency, Type, Quantity, Price, Amount (EUR), Commission, Net Amount
-  const tlSheet = wb.Sheets[findSheetName(wb, "Trade Log") ?? findSheetName(wb, "Trades") ?? ""];
-  const tradeLog: TradeRow[] = [];
-  if (tlSheet) {
-    const rows = sheetToRows(tlSheet, 2); // header at row index 2 = Excel row 3
-    for (const row of rows) {
-      const type = row["Type"]?.toString() ?? row["Transaction Type"]?.toString() ?? "";
-      if (!type || NON_TRADE_TYPES.has(type) || type === "Type") continue;
-      const d = toDate(row["Date"] ?? row["Trade Date"]);
-      if (!d) continue;
-      tradeLog.push({
-        date: d,
-        security: row["Security"]?.toString() ?? row["Name"]?.toString() ?? "",
-        assetClass: row["Asset Class"]?.toString() ?? "",
-        currency: row["Currency"]?.toString() ?? "EUR",
-        type,
-        shares: toNum(row["Quantity"] ?? row["Shares"] ?? row["Qty"]),
-        price: toNum(row["Price"]),
-        netAmount: toNum(row["Net Amount"] ?? row["Amount"]),
-      });
-    }
-  }
-
-  // ── IRR Analysis ───────────────────────────────────────────────────────────
-  // Python: raw.iloc[9:, [0,1]] for investor; raw.iloc[9:, [4,5]] for portfolio
-  // Row index 9 (0-based) = data starts at Excel row 10
-  const irrSheet = wb.Sheets[findSheetName(wb, "IRR") ?? ""];
-  const irrInvestor: CashFlowRow[] = [];
-  const irrPortfolio: CashFlowRow[] = [];
-  if (irrSheet) {
-    const range = XLSX.utils.decode_range(irrSheet["!ref"] ?? "A1");
-    for (let r = 9; r <= range.e.r; r++) {
-      const d1 = toDate(irrSheet[XLSX.utils.encode_cell({ r, c: 0 })]?.v);
-      const v1 = irrSheet[XLSX.utils.encode_cell({ r, c: 1 })]?.v;
-      if (d1 && v1 !== undefined && v1 !== null) {
-        irrInvestor.push({ date: d1, cashFlow: toNum(v1) });
-      }
-      const d2 = toDate(irrSheet[XLSX.utils.encode_cell({ r, c: 4 })]?.v);
-      const v2 = irrSheet[XLSX.utils.encode_cell({ r, c: 5 })]?.v;
-      if (d2 && v2 !== undefined && v2 !== null) {
-        irrPortfolio.push({ date: d2, cashFlow: toNum(v2) });
-      }
-    }
-  }
-
-  // ── Monthly Returns ────────────────────────────────────────────────────────
-  // Python: header=4 (0-based) = Excel row 5; df.columns renamed to:
-  // ["Month End", "Portfolio Value", "Deposits In Month", "Withdrawals In Month", "Monthly Return", "Cumulative Return"]
-  // Uses positional: col 0 = date, col 1 = NAV, col 4 = monthly return
-  const mrSheet = wb.Sheets[findSheetName(wb, "Monthly Returns") ?? findSheetName(wb, "NAV") ?? ""];
-  const monthlyReturns: MonthlyReturnRow[] = [];
-  if (mrSheet) {
-    const rows = sheetToPositionalRows(mrSheet, 4); // header at row index 4 = Excel row 5
-    for (const row of rows) {
-      const d = toDate(row[0]);
-      const nav = toNum(row[1]);
-      if (!d || nav <= 0) continue;
-      monthlyReturns.push({
-        monthEnd: d,
-        nav,
-        monthlyReturn: toNum(row[4]),
-        cumulativeReturn: toNum(row[5]),
-      });
-    }
-    monthlyReturns.sort((a, b) => a.monthEnd.getTime() - b.monthEnd.getTime());
-  }
-
-  return { tradeLog, holdings, portfolioMetrics, irrInvestor, irrPortfolio, monthlyReturns, cutoffDate };
+export function loadWorkbookFromBuffer(buffer: Buffer | ArrayBuffer | Uint8Array): WorkbookData {
+  const wb = XLSX.read(buffer, { cellDates: false, cellNF: false });
+  return parseWorkbook(wb);
 }

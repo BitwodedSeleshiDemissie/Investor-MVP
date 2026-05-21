@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { query, dbEnabled, getPool } from "@/db/client";
-import { initSchema } from "@/db/schema";
-import { buildWorkbookData, formatDateOnly } from "@/lib/directa-preprocess";
+import { dbEnabled, getPrisma } from "@/db/prisma";
+import { buildWorkbookData, formatDateOnly, parseCsvFile, parsePositionCsvFile } from "@/lib/directa-preprocess";
+import {
+  buildDeterministicChecks,
+  type ReviewCheck,
+  type UploadedCsv,
+} from "@/lib/directa-upload-checks";
 import { buildAuditWorkbookBuffer } from "@/lib/audit-workbook";
 import {
   checkWarnings,
@@ -14,18 +18,12 @@ import {
   computeRisk,
   computeTargets,
   computeTimeseries,
+  xirrSafe,
 } from "@/lib/calculations";
-import { env } from "@/lib/env";
 import { getSession } from "@/lib/auth";
-import type { PortfolioSnapshot } from "@/types/portfolio";
-
-const SETTINGS = {
-  riskFreeRate: env.RISK_FREE_RATE,
-  moicTarget: env.MOIC_TARGET,
-  targetEquityPct: env.TARGET_EQUITY_PCT,
-  targetBondPct: env.TARGET_BOND_PCT,
-  targetAltPct: env.TARGET_ALT_PCT,
-};
+import { calculationSettings, getFundSettings } from "@/server/fund-settings";
+import type { InvestorPerf, PortfolioSnapshot } from "@/types/portfolio";
+import type { Prisma } from "@/generated/prisma/client";
 
 function getMonthEnd(filename: string): string | null {
   const m1 = filename.match(/(\d{4})-(\d{2})-(\d{2})/);
@@ -42,11 +40,178 @@ function getMonthEnd(filename: string): string | null {
 
 function todayLocal(): string {
   const now = new Date();
+  return [now.getFullYear(), String(now.getMonth() + 1).padStart(2, "0"), String(now.getDate()).padStart(2, "0")].join("-");
+}
+
+function dbDateOnly(value: string | Date): string {
+  if (value instanceof Date) return formatDateOnly(value);
+  return String(value).split("T")[0];
+}
+
+function canonicalCsvFilename(filename: string): string {
+  return filename.replace(/\s+\(\d+\)(?=\.csv$)/i, "");
+}
+
+function classifyUploadedCsv(name: string, content: string): UploadedCsv {
+  const statementRows = parseCsvFile(content, name).length;
+  const positionRows = parsePositionCsvFile(content, name).filter((row) => row.quantity > 0 && row.marketValue > 0).length;
+  return {
+    name,
+    content,
+    statementRows,
+    positionRows,
+    hasLendingOrCollateralRows: /fondi a garanzia|titoli prestati|titoli resi|totale/i.test(content),
+  };
+}
+
+function dedupeStoredCsvFiles(
+  rows: Array<{ filename: string; content: string; month_end: string | null; uploaded_at: string }>
+): Array<{ filename: string; content: string; month_end: string | null; uploaded_at: string }> {
+  const byCanonicalName = new Map<string, { filename: string; content: string; month_end: string | null; uploaded_at: string }>();
+  for (const row of rows) {
+    byCanonicalName.set(canonicalCsvFilename(row.filename), { ...row, filename: canonicalCsvFilename(row.filename) });
+  }
+  return [...byCanonicalName.values()].sort((a, b) => {
+    const month = String(a.month_end ?? "").localeCompare(String(b.month_end ?? ""));
+    if (month !== 0) return month;
+    return a.filename.localeCompare(b.filename);
+  });
+}
+
+function computeFundIrrFromProfiles(
+  profiles: Array<{ capital_eur: number; subscription_date: Date | string }>,
+  cutoffDate: string,
+  currentNav: number
+): number | null {
+  if (currentNav <= 0 || profiles.length === 0) return null;
+  const cashflows = profiles
+    .map((profile) => {
+      const rawDate = dbDateOnly(profile.subscription_date);
+      const date = /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? new Date(`${rawDate}T00:00:00Z`) : new Date(rawDate);
+      return { date, amount: -Number(profile.capital_eur) };
+    })
+    .filter((cf) => Number.isFinite(cf.amount) && cf.amount < 0 && Number.isFinite(cf.date.getTime()));
+  if (cashflows.length === 0) return null;
+  cashflows.sort((a, b) => a.date.getTime() - b.date.getTime());
+  cashflows.push({ date: new Date(`${cutoffDate}T00:00:00Z`), amount: currentNav });
+  return xirrSafe(cashflows);
+}
+
+function formatMoney(value: number): string {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(value);
+}
+
+function previousDirectaCashForComparison(snapshot: PortfolioSnapshot | null): number | null {
+  if (!snapshot) return null;
+  if (snapshot.overlaySources?.source === "CEO tracker workbook") return null;
+  return snapshot.directaCash ?? null;
+}
+
+function buildReviewSummary(args: {
+  uploaded: UploadedCsv[];
+  payload: PortfolioSnapshot;
+  previous: PortfolioSnapshot | null;
+  externalCash: number;
+}): string {
+  const statementFiles = args.uploaded.filter((file) => file.statementRows > 0).length;
+  const positionFiles = args.uploaded.filter((file) => file.positionRows > 0).length;
+  const valuationText = positionFiles > 0
+    ? "Listed market value is based on the Directa positions export."
+    : "Listed market value is based on the CEO tracker workflow: quantities from Estratto Conto trades and valuation from the latest statement trade prices.";
+  const previousTotal = args.previous?.kpis.totalPortfolioValue ?? null;
+  const deltaText = previousTotal && previousTotal > 0
+    ? ` Portfolio value changed by ${formatMoney(args.payload.kpis.totalPortfolioValue - previousTotal)} versus the previous published snapshot.`
+    : "";
+  const overlayText = args.externalCash > 0
+    ? ` Non-Directa cash and private overlays are being carried forward from the current tracker/manual context.`
+    : "";
+  const lendingText = args.uploaded.some((file) => file.hasLendingOrCollateralRows)
+    ? ` Directa lending/collateral rows were detected and folded into final positions where applicable.`
+    : "";
   return [
-    now.getFullYear(),
-    String(now.getMonth() + 1).padStart(2, "0"),
-    String(now.getDate()).padStart(2, "0"),
-  ].join("-");
+    `The upload produced a draft snapshot for ${args.payload.cutoffDate} using ${statementFiles} Directa statement file(s) and ${positionFiles} positions file(s).`,
+    `${valuationText} Directa statement cash is ${formatMoney(args.payload.directaCash)}.`,
+    `${args.payload.holdings.length} listed holdings were parsed, with total portfolio value ${formatMoney(args.payload.kpis.totalPortfolioValue)}.${deltaText}`,
+    `${lendingText}${overlayText}`.trim(),
+    "If these figures do not match finance records, do not publish; correct the source files or contact the dev team.",
+  ].filter(Boolean).join(" ");
+}
+
+async function buildAiReviewSummary(args: {
+  uploaded: UploadedCsv[];
+  payload: PortfolioSnapshot;
+  previous: PortfolioSnapshot | null;
+  externalCash: number;
+  checks: ReviewCheck[];
+}): Promise<{ summary: string; provider: "openai" | "rules" }> {
+  const fallback = buildReviewSummary(args);
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return { summary: fallback, provider: "rules" };
+
+  const model = process.env.OPENAI_AUDIT_MODEL || "gpt-4o-mini";
+  const checkSummary = args.checks.map((check) => `${check.severity}: ${check.title} - ${check.detail}`).join("\n");
+  const previousTotal = args.previous?.kpis.totalPortfolioValue ?? null;
+  const previousCash = previousDirectaCashForComparison(args.previous);
+  const previousHoldings = args.previous?.holdings?.length ?? null;
+
+  try {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model,
+        temperature: 0.1,
+        max_tokens: 320,
+        messages: [
+          {
+            role: "system",
+            content: `You are a fund operations analyst reviewing a monthly Directa upload package before it is published to investors.
+Answer each of the 5 questions below with exactly one bullet point. Use only the data provided — do not invent numbers or speculate beyond the facts.
+Be factual and specific. Total output must be under 180 words.
+
+Questions to answer:
+1. Positions & trades: Do the quantities and holdings count look coherent with the Estratto Conto trade history? If no positions file exists, that is acceptable in CEO tracker valuation mode.
+2. Cash: Does the Directa cash figure make sense given the trades and income events this month?
+3. Month-on-month change: Is the total portfolio change from last month within a plausible range, or does it need explanation?
+4. Lending / collateral: Were lending or collateral rows detected? Do they appear fully reconciled in the final positions?
+5. Non-Directa data: Is outside-Directa data (non-listed assets, external cash) being used only where Directa has no data for those items?
+
+End with a one-line verdict: "Ready to publish." or "Needs manual review — [reason]."`,
+          },
+          {
+            role: "user",
+            content: JSON.stringify({
+              cutoffDate: args.payload.cutoffDate,
+              currentPortfolioValue: args.payload.kpis.totalPortfolioValue,
+              currentListedValue: args.payload.composition.listed,
+              currentDirectaCash: args.payload.directaCash,
+              currentNonDirectaCashOverlay: args.externalCash,
+              currentHoldingsCount: args.payload.holdings.length,
+              previousPortfolioValue: previousTotal,
+              previousDirectaCash: previousCash,
+              previousHoldingsCount: previousHoldings,
+              valuationMode: args.uploaded.some((file) => file.positionRows > 0)
+                ? "Directa positions export"
+                : "CEO tracker statement-only mode",
+              uploadedFiles: args.uploaded.map((file) => ({
+                name: file.name,
+                statementRows: file.statementRows,
+                positionRows: file.positionRows,
+                hasLendingOrCollateralRows: file.hasLendingOrCollateralRows,
+              })),
+              deterministicChecks: checkSummary,
+            }, null, 2),
+          },
+        ],
+      }),
+    });
+    if (!response.ok) return { summary: fallback, provider: "rules" };
+    const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+    const summary = data.choices?.[0]?.message?.content?.trim();
+    return summary ? { summary, provider: "openai" } : { summary: fallback, provider: "rules" };
+  } catch {
+    return { summary: fallback, provider: "rules" };
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -54,14 +219,10 @@ export async function POST(req: NextRequest) {
   if (!session || session.role !== "admin") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-
   if (!dbEnabled()) {
     return NextResponse.json({ error: "Database not configured" }, { status: 503 });
   }
 
-  await initSchema();
-
-  // Parse multipart form.
   let formData: FormData;
   try {
     formData = await req.formData();
@@ -74,73 +235,131 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "No CSV files uploaded" }, { status: 400 });
   }
 
-  // Store uploaded CSVs in DB (upsert by filename).
+  const cutoffDateOverride = (formData.get("cutoffDateOverride") as string | null) ?? null;
+  const manualInputsRaw = (formData.get("manualInputs") as string | null) ?? null;
+
+  type ManualInputItem = {
+    item_key: string;
+    item_type: string;
+    value: number;
+    display_name?: string | null;
+    subcategory?: string | null;
+  };
+  let formManualItems: ManualInputItem[] | null = null;
+  if (manualInputsRaw) {
+    try {
+      formManualItems = JSON.parse(manualInputsRaw) as ManualInputItem[];
+    } catch {
+      return NextResponse.json({ error: "Invalid manualInputs JSON" }, { status: 400 });
+    }
+  }
+  if (formManualItems === null) {
+    return NextResponse.json({ error: "Manual non-Directa inputs were not submitted." }, { status: 400 });
+  }
+
+  const prisma = getPrisma();
+
+  // Store uploaded CSVs (upsert by filename).
   const newFilenames: string[] = [];
+  const uploadedCsvs: UploadedCsv[] = [];
   for (const file of uploadedFiles) {
-    if (!file.name.endsWith(".csv")) continue;
+    if (!file.name.toLowerCase().endsWith(".csv")) continue;
     const content = await file.text();
-    const monthEnd = getMonthEnd(file.name);
-    await query(
-      `INSERT INTO directa_csv_files (filename, month_end, content)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (filename) DO UPDATE SET content = EXCLUDED.content, uploaded_at = NOW()`,
-      [file.name, monthEnd, content]
-    );
-    newFilenames.push(file.name);
+    uploadedCsvs.push(classifyUploadedCsv(file.name, content));
+    const storedName = canonicalCsvFilename(file.name);
+    const monthEnd = cutoffDateOverride ?? getMonthEnd(file.name);
+    await prisma.directa_csv_files.upsert({
+      where: { filename: storedName },
+      create: { filename: storedName, month_end: monthEnd ? new Date(monthEnd) : null, content },
+      update: { content, uploaded_at: new Date() },
+    });
+    newFilenames.push(storedName);
   }
   if (newFilenames.length === 0) {
     return NextResponse.json({ error: "No valid CSV files found (expected .csv)" }, { status: 400 });
   }
 
-  // Load full CSV history from DB.
-  const storedFiles = await query<{ filename: string; content: string }>(
-    "SELECT filename, content FROM directa_csv_files ORDER BY month_end ASC NULLS LAST, filename ASC"
-  );
+  // Load full CSV history.
+  const storedFileRows = await prisma.$queryRaw<Array<{
+    filename: string;
+    content: string;
+    month_end: string | null;
+    uploaded_at: string;
+  }>>`
+    SELECT filename, content, month_end::text, uploaded_at::text
+    FROM directa_csv_files
+    ORDER BY month_end ASC NULLS LAST, uploaded_at ASC, filename ASC
+  `;
+  const storedFiles = dedupeStoredCsvFiles(storedFileRows);
   if (storedFiles.length === 0) {
     return NextResponse.json({ error: "No CSV files stored" }, { status: 400 });
   }
 
-  // Read admin overlays from DB.
-  // Non-listed: latest value per item_key up to today
-  const today = todayLocal();
-  const nonListedRows = await query<{ value: string }>(
-    `SELECT DISTINCT ON (mv.item_key) mv.value
-     FROM admin_manual_values mv
-     JOIN asset_dictionary d ON d.item_key = mv.item_key
-     WHERE d.active = TRUE AND LOWER(d.item_type) <> 'cash' AND mv.as_of_date <= $1
-     ORDER BY mv.item_key, mv.as_of_date DESC, mv.created_at DESC`,
-    [today]
-  );
-  const nonListedValue = nonListedRows.reduce((s, r) => s + Number(r.value), 0);
+  const previousRows = await prisma.$queryRaw<Array<{ id: bigint; payload: PortfolioSnapshot }>>`
+    SELECT id, payload
+    FROM portfolio_snapshots
+    WHERE publication_status = 'published'
+      AND COALESCE(source_file, '') NOT ILIKE 'CEO tracker context:%'
+    ORDER BY as_of_date DESC, created_at DESC
+    LIMIT 1
+  `;
+  const previousSnapshotId = previousRows[0] ? Number(previousRows[0].id) : null;
+  const previousSnapshot = previousRows[0]?.payload ?? null;
+  const previousCutoffDate = previousSnapshot?.cutoffDate ?? null;
+  const filesForSnapshot = previousCutoffDate
+    ? storedFiles.filter((file) => !file.month_end || file.month_end > previousCutoffDate)
+    : storedFiles;
+  if (filesForSnapshot.length === 0) {
+    return NextResponse.json(
+      { error: "No new Directa statement files were found after the current published snapshot. Upload a later Estratto Conto CSV or select the correct snapshot month." },
+      { status: 400 }
+    );
+  }
+  const usedCsvs = filesForSnapshot.map((file) => classifyUploadedCsv(file.filename, file.content));
 
-  const cashRows = await query<{ value: string }>(
-    `SELECT DISTINCT ON (mv.item_key) mv.value
-     FROM admin_manual_values mv
-     JOIN asset_dictionary d ON d.item_key = mv.item_key
-     WHERE d.active = TRUE AND LOWER(d.item_type) = 'cash' AND mv.as_of_date <= $1
-     ORDER BY mv.item_key, mv.as_of_date DESC, mv.created_at DESC`,
-    [today]
-  );
-  const externalCash = cashRows.reduce((s, r) => s + Number(r.value), 0);
+  const nonListedValue = formManualItems
+    .filter((item) => item.item_type.toLowerCase() !== "cash")
+    .reduce((s, item) => s + Number(item.value), 0);
+  const externalCash = formManualItems
+    .filter((item) => item.item_type.toLowerCase() === "cash")
+    .reduce((s, item) => s + Number(item.value), 0);
 
-  const controlRows = await query<{ capital_committed: string }>(
-    "SELECT capital_committed FROM admin_controls ORDER BY as_of_date DESC, created_at DESC LIMIT 1"
-  );
-  const capitalCommitted = controlRows.length > 0 ? Number(controlRows[0].capital_committed) : 0;
+  const [controlRow, fundSettings] = await Promise.all([
+    prisma.admin_controls.findFirst({
+      orderBy: [{ as_of_date: "desc" }, { created_at: "desc" }],
+      select: { capital_committed: true, portfolio_id: true, investor_name: true },
+    }),
+    getFundSettings(),
+  ]);
+  const settings = calculationSettings(fundSettings);
+  const capitalCommitted = controlRow ? Number(controlRow.capital_committed) : 0;
+  const approvedPortfolioId = controlRow?.portfolio_id ?? fundSettings.portfolioId;
+  const approvedInvestorName = controlRow?.investor_name ?? fundSettings.fundDisplayName;
 
-  // Build WorkbookData and compute snapshot.
   let workbook;
   try {
     workbook = await buildWorkbookData(
-      storedFiles.map((f) => ({ name: f.filename, content: f.content })),
-      { nonListedValue, externalCash, capitalCommitted }
+      filesForSnapshot.map((f) => ({ name: f.filename, content: f.content })),
+      {
+        nonListedValue,
+        externalCash,
+        capitalCommitted,
+        baselineSnapshot: previousSnapshot
+          ? {
+              cutoffDate: previousSnapshot.cutoffDate,
+              totalPortfolioValue: previousSnapshot.kpis.totalPortfolioValue,
+              holdings: previousSnapshot.holdings,
+              timeseries: previousSnapshot.timeseries,
+            }
+          : null,
+      }
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: `Preprocessing failed: ${msg}` }, { status: 422 });
   }
 
-  const kpis = computeKPIs(workbook, SETTINGS);
+  const kpis = computeKPIs(workbook, settings);
   const composition = computeComposition(workbook);
 
   const payload: PortfolioSnapshot = {
@@ -148,9 +367,9 @@ export async function POST(req: NextRequest) {
     timeseries: computeTimeseries(workbook),
     allocation: computeAllocation(workbook),
     irr: computeIRR(workbook),
-    risk: computeRisk(workbook, SETTINGS),
+    risk: computeRisk(workbook, settings),
     distributions: computeDistributions(workbook),
-    targets: computeTargets(workbook, SETTINGS),
+    targets: computeTargets(workbook, settings),
     holdings: computeHoldings(workbook),
     composition,
     pnl: {
@@ -160,83 +379,148 @@ export async function POST(req: NextRequest) {
     },
     directaCash: Number(workbook.portfolioMetrics["Statement Cash"] ?? workbook.portfolioMetrics["Directa Cash"] ?? 0),
     cutoffDate: formatDateOnly(workbook.cutoffDate),
-    investorName: env.INVESTOR_NAME,
-    portfolioId: env.PORTFOLIO_ID,
+    investorName: approvedInvestorName,
+    portfolioId: approvedPortfolioId,
     warnings: checkWarnings(workbook),
+    investorPerformance: [],
+  };
+  if (cutoffDateOverride) {
+    payload.cutoffDate = cutoffDateOverride;
+    payload.irr.valuationDate = cutoffDateOverride;
+  }
+
+  const profileRows = await prisma.investor_profiles.findMany({
+    where: { active: true },
+    orderBy: [{ subscription_date: "asc" }, { name: "asc" }],
+    select: { name: true, investor_type: true, capital_eur: true, units: true, subscription_date: true, nav_unit_at_sub: true },
+  });
+  let profileFundIrr: number | null = null;
+  if (profileRows.length > 0) {
+    const totalUnits = profileRows.reduce((s, p) => s + p.units, 0);
+    const navUnit = totalUnits > 0 ? kpis.totalPortfolioValue / totalUnits : 0;
+    const cutoffTs = new Date(payload.cutoffDate);
+    profileFundIrr = computeFundIrrFromProfiles(profileRows, payload.cutoffDate, kpis.totalPortfolioValue);
+    if (profileFundIrr !== null) {
+      payload.irr.fundIrr = profileFundIrr;
+      payload.irr.investorIrr = profileFundIrr;
+    }
+    payload.investorPerformance = profileRows.map((p): InvestorPerf => {
+      const capitalEur = p.capital_eur;
+      const units = p.units;
+      const subscriptionDate = dbDateOnly(p.subscription_date);
+      const yearsElapsed = (cutoffTs.getTime() - new Date(subscriptionDate).getTime()) / (365.25 * 24 * 3600 * 1000);
+      const currentValueEur = units * navUnit;
+      const moic = capitalEur > 0 ? currentValueEur / capitalEur : 0;
+      const irrAnnualized = yearsElapsed > 0 && moic > 0 ? Math.pow(moic, 1 / yearsElapsed) - 1 : 0;
+      return { name: p.name, type: p.investor_type, subscriptionDate, capitalEur, units, yearsElapsed, navUnitAtSub: p.nav_unit_at_sub, currentValueEur, moic, irrAnnualized };
+    });
+  }
+
+  const frozenAt = new Date().toISOString();
+  payload.overlaysFrozen = true;
+  payload.frozenAt = frozenAt;
+  payload.overlaySources = {
+    capitalCommitted,
+    nonListedValue,
+    externalCash,
+    overlayItemCount: formManualItems.length,
+    investorProfileCount: profileRows.length,
+    manualItems: formManualItems.map((item) => ({
+      item_key: item.item_key, item_type: item.item_type, value: Number(item.value),
+      display_name: item.display_name, subcategory: item.subcategory,
+    })),
   };
 
-  // Ensure legacy tables exist (idempotent).
-  await query(`
-    CREATE TABLE IF NOT EXISTS security_tipo_cache (
-      security_name TEXT PRIMARY KEY,
-      tipo TEXT NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-  await query(`
-    CREATE TABLE IF NOT EXISTS portfolio_snapshots (
-      id BIGSERIAL PRIMARY KEY,
-      as_of_date DATE NOT NULL,
-      source_file TEXT NOT NULL DEFAULT '',
-      payload JSONB NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
+  const deterministicChecks = buildDeterministicChecks({
+    uploaded: uploadedCsvs,
+    used: usedCsvs,
+    payload,
+    previous: previousSnapshot,
+    externalCash,
+  });
+  const canPublish = !deterministicChecks.some((check) => check.severity === "blocker");
+  const auditSummary = await buildAiReviewSummary({ uploaded: usedCsvs, payload, previous: previousSnapshot, externalCash, checks: deterministicChecks });
+  const aiSummary = auditSummary.summary;
 
   const auditFileName = `ariete-statement-audit-${payload.cutoffDate}.xlsx`;
   const auditWorkbook = buildAuditWorkbookBuffer(workbook);
-  const pool = getPool();
-  if (!pool) {
-    return NextResponse.json({ error: "Database not configured" }, { status: 503 });
-  }
 
-  const client = await pool.connect();
   let snapshotId: number;
   try {
-    await client.query("BEGIN");
-    const inserted = await client.query<{ id: string }>(
-      `INSERT INTO portfolio_snapshots (as_of_date, source_file, payload)
-       VALUES ($1, $2, $3::jsonb)
-       RETURNING id`,
-      [payload.cutoffDate, newFilenames.join(", "), JSON.stringify(payload)]
-    );
-    snapshotId = Number(inserted.rows[0].id);
-    await client.query(
-      `INSERT INTO portfolio_snapshot_artifacts
-         (snapshot_id, artifact_type, file_name, mime_type, content, metadata)
-       VALUES ($1, 'preprocessed_workbook', $2, $3, $4, $5::jsonb)`,
-      [
-        snapshotId,
-        auditFileName,
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        auditWorkbook,
-        JSON.stringify({
-          cutoffDate: payload.cutoffDate,
-          sourceFiles: newFilenames,
-          storedFiles: storedFiles.map((file) => file.filename),
-          generatedFrom: "statement_csv_upload",
-        }),
-      ]
-    );
-    await client.query("COMMIT");
+    const result = await prisma.$transaction(async (tx) => {
+      const inserted = await tx.portfolio_snapshots.create({
+        data: {
+          as_of_date: new Date(payload.cutoffDate),
+          source_file: newFilenames.join(", "),
+          payload: payload as unknown as Prisma.InputJsonValue,
+          publication_status: "draft",
+          audit_report: {
+            status: canPublish ? "ready_to_publish" : "blocked",
+            uploadedFiles: uploadedCsvs.map((file) => ({
+              name: file.name, statementRows: file.statementRows,
+              positionRows: file.positionRows, hasLendingOrCollateralRows: file.hasLendingOrCollateralRows,
+            })),
+            previousSnapshotId,
+            canPublish,
+            auditSummaryProvider: auditSummary.provider,
+            generatedAt: frozenAt,
+          } as Prisma.InputJsonValue,
+          deterministic_checks: deterministicChecks as unknown as Prisma.InputJsonValue,
+          ai_summary: aiSummary,
+          supersedes_snapshot_id: previousSnapshotId ? BigInt(previousSnapshotId) : null,
+          overlays_frozen: true,
+        },
+        select: { id: true },
+      });
+      await tx.portfolio_snapshot_artifacts.create({
+        data: {
+          snapshot_id: inserted.id,
+          artifact_type: "preprocessed_workbook",
+          file_name: auditFileName,
+          mime_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          content: Buffer.from(auditWorkbook),
+          metadata: {
+            cutoffDate: payload.cutoffDate,
+            sourceFiles: newFilenames,
+            storedFiles: storedFiles.map((file) => file.filename),
+            generatedFrom: "statement_csv_upload",
+          } as Prisma.InputJsonValue,
+        },
+      });
+      return inserted;
+    });
+    snapshotId = Number(result.id);
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => undefined);
     const msg = error instanceof Error ? error.message : String(error);
     return NextResponse.json({ error: `Snapshot save failed: ${msg}` }, { status: 500 });
-  } finally {
-    client.release();
   }
 
   return NextResponse.json({
     ok: true,
     cutoffDate: payload.cutoffDate,
     snapshotId,
+    publicationStatus: "draft",
+    canPublish,
+    checks: deterministicChecks,
+    aiSummary,
+    aiProvider: auditSummary.provider,
+    previousSnapshotId,
+    previousPortfolioValue: previousSnapshot?.kpis.totalPortfolioValue ?? null,
+    previousCutoffDate: previousSnapshot?.cutoffDate ?? null,
+    previousDirectaCash: previousDirectaCashForComparison(previousSnapshot),
+    previousHoldingsCount: previousSnapshot?.holdings?.length ?? null,
     auditFileName,
     filesStored: storedFiles.length,
     newFiles: newFilenames,
+    profileInvestorCount: profileRows.length,
+    profileFundIrr,
     portfolioValue: kpis.totalPortfolioValue,
+    fundIrr: payload.irr.fundIrr,
+    directaListed: payload.composition.listed,
+    nonDirectaTotal: nonListedValue + externalCash,
     directaCash: payload.directaCash,
     holdingsCount: payload.holdings.length,
     warnings: payload.warnings,
+    review: "Uploaded files created a draft snapshot only. Investor dashboards will update after an admin reviews and publishes this draft.",
   });
 }

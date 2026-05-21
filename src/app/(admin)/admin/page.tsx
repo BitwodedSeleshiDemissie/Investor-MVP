@@ -1,82 +1,149 @@
-import { Building2, Wallet, Settings, Database, TrendingUp, List, ArrowRight, CheckCircle2, AlertCircle, Upload } from "lucide-react";
+﻿import {
+  Wallet, Database, TrendingUp,
+  CheckCircle2, AlertCircle, Upload, Users, Clock,
+  Download, FileText, ArrowRight, Layers, HandCoins, CreditCard,
+  SlidersHorizontal,
+} from "lucide-react";
 import Link from "next/link";
-import { getAdminData } from "@/server/queries/admin";
-import { dbEnabled } from "@/db/client";
+import { getFixedPortfolioValues, getInvestorProfiles, getSnapshotHistory } from "@/server/queries/admin";
+import { dbEnabled } from "@/db/prisma";
 import { formatEur, formatDate } from "@/lib/utils";
+
+type SectionItem = {
+  href: string;
+  icon: React.ElementType;
+  title: string;
+  description: string;
+  stat: string;
+  color: string;
+  bgColor: string;
+  ok: boolean;
+};
 
 export default async function AdminPage() {
   const isDbEnabled = dbEnabled();
-  const adminData = await getAdminData();
+  const [portfolioValues, investorProfiles, snapshotHistory] = await Promise.all([
+    getFixedPortfolioValues(),
+    getInvestorProfiles(),
+    getSnapshotHistory(),
+  ]);
 
-  const nlValues = adminData.manualValues.filter((v) => v.itemType === "non_listed");
-  const cashValues = adminData.manualValues.filter((v) => v.itemType === "cash");
+  const {
+    privateParticipations,
+    privateLoanPrincipal,
+    cashOutsideDirecta,
+    statementCash,
+  } = portfolioValues;
 
-  // Latest per asset
-  const latestNL = new Map<string, typeof nlValues[number]>();
-  for (const v of nlValues) {
-    const ex = latestNL.get(v.itemKey);
-    if (!ex || v.valueDate > ex.valueDate) latestNL.set(v.itemKey, v);
-  }
-  const latestCash = new Map<string, typeof cashValues[number]>();
-  for (const v of cashValues) {
-    const ex = latestCash.get(v.itemKey);
-    if (!ex || v.valueDate > ex.valueDate) latestCash.set(v.itemKey, v);
-  }
+  const activeInvestors = investorProfiles.filter((p) => p.active);
+  const totalNonListed  = privateParticipations + privateLoanPrincipal;
+  const totalCash       = statementCash + cashOutsideDirecta;
+  const latest          = snapshotHistory[0];
 
-  const totalNL = [...latestNL.values()].reduce((s, r) => s + r.value, 0);
-  const totalCash = [...latestCash.values()].reduce((s, r) => s + r.value, 0);
-  const latestControl = adminData.controls[0];
-
-  const sections = [
+  const steps = [
     {
-      href: "/admin/upload",
-      icon: Upload,
-      title: "Upload Monthly Report",
-      description: "Upload statement CSVs & generate snapshot",
-      stat: "Upload new month",
-      color: "text-emerald-400",
-      bgColor: "bg-emerald-500/10",
-      ok: true,
+      label: "Baseline snapshot uploaded",
+      detail: latest
+        ? `Latest: ${formatDate(latest.cutoffDate)} · ${latest.status}`
+        : "No snapshot — upload the CEO tracker workbook",
+      ok: snapshotHistory.length > 0,
     },
     {
-      href: "/admin/dictionary",
-      icon: Building2,
-      title: "Asset Dictionary",
-      description: "Manage registered assets",
-      stat: `${adminData.dictionary.length} assets`,
-      color: "text-primary",
-      bgColor: "bg-primary/10",
-      ok: adminData.dictionary.length > 0,
+      label: "Non-listed values entered",
+      detail: totalNonListed > 0
+        ? `Participations: ${formatEur(privateParticipations)} · Loans: ${formatEur(privateLoanPrincipal)}`
+        : "No non-listed values yet",
+      ok: totalNonListed > 0,
     },
     {
-      href: "/admin/non-listed",
-      icon: TrendingUp,
-      title: "Non-Listed Values",
-      description: "Enter monthly valuations",
-      stat: latestNL.size > 0 ? formatEur(totalNL) : "No values",
-      color: "text-purple-400",
-      bgColor: "bg-purple-500/10",
-      ok: latestNL.size > 0,
+      label: "Cash outside Directa entered",
+      detail: cashOutsideDirecta > 0
+        ? `${formatEur(cashOutsideDirecta)} (statement cash ${formatEur(statementCash)} is auto from Directa)`
+        : "No external cash balance entered",
+      ok: cashOutsideDirecta > 0,
     },
     {
-      href: "/admin/cash",
-      icon: Wallet,
-      title: "Cash & Liquidity",
-      description: "Monthly balances for cash accounts",
-      stat: latestCash.size > 0 ? formatEur(totalCash) : "No balances",
-      color: "text-blue-400",
-      bgColor: "bg-blue-500/10",
-      ok: latestCash.size > 0,
+      label: "Investors configured",
+      detail: activeInvestors.length > 0
+        ? `${activeInvestors.length} active investor${activeInvestors.length !== 1 ? "s" : ""}`
+        : "No investors — add profiles to enable per-investor metrics",
+      ok: activeInvestors.length > 0,
+    },
+  ];
+  const stepsComplete = steps.filter((s) => s.ok).length;
+
+  const groups: Array<{ label: string; description: string; items: SectionItem[] }> = [
+    {
+      label: "Monthly Values",
+      description: "Enter once a month. These feed directly into the portfolio composition shown to all investors.",
+      items: [
+        {
+          href: "/admin/non-listed",
+          icon: TrendingUp,
+          title: "Non-Listed Assets",
+          description: `Private Participations and Private Loan Principal — manually approved each month from the CEO tracker`,
+          stat: totalNonListed > 0
+            ? `${formatEur(privateParticipations)} participations · ${formatEur(privateLoanPrincipal)} loans`
+            : "No values entered",
+          color: "text-purple-400",
+          bgColor: "bg-purple-500/10",
+          ok: totalNonListed > 0,
+        },
+        {
+          href: "/admin/cash",
+          icon: Wallet,
+          title: "Cash",
+          description: `Statement cash comes from Directa automatically. Enter Cash Outside Directa here — total shown to investors.`,
+          stat: totalCash > 0
+            ? `${formatEur(statementCash)} statement · ${formatEur(cashOutsideDirecta)} external`
+            : "No cash data",
+          color: "text-blue-400",
+          bgColor: "bg-blue-500/10",
+          ok: cashOutsideDirecta > 0 || statementCash > 0,
+        },
+      ],
     },
     {
-      href: "/admin/controls",
-      icon: Settings,
-      title: "Portfolio Parameters",
-      description: "Capital committed and reference values",
-      stat: latestControl ? formatEur(latestControl.capitalCommitted) : "Not set",
-      color: "text-amber-400",
-      bgColor: "bg-amber-500/10",
-      ok: !!latestControl,
+      label: "Foundation",
+      description: "Configure once. Investor profiles power all per-investor metrics on the portal.",
+      items: [
+        {
+          href: "/admin/investors",
+          icon: Users,
+          title: "Investor Profiles",
+          description: "Capital committed, units held, subscription date, and entry NAV per investor",
+          stat: activeInvestors.length > 0 ? `${activeInvestors.length} active investor${activeInvestors.length !== 1 ? "s" : ""}` : "No investors",
+          color: "text-indigo-400",
+          bgColor: "bg-indigo-500/10",
+          ok: activeInvestors.length > 0,
+        },
+        {
+          href: "/admin/settings",
+          icon: SlidersHorizontal,
+          title: "Fund Settings",
+          description: "Portfolio identity, dashboard assumptions, allocation targets, and waterfall parameters",
+          stat: "Admin managed",
+          color: "text-emerald-400",
+          bgColor: "bg-emerald-500/10",
+          ok: true,
+        },
+      ],
+    },
+    {
+      label: "Data Upload",
+      description: "Upload the CEO tracker once as the official baseline, then Directa CSVs each month for listed holdings.",
+      items: [
+        {
+          href: "/admin/upload",
+          icon: Upload,
+          title: "Upload Data",
+          description: "Directa CSVs (listed holdings, trades, income, risk series) and CEO tracker workbook",
+          stat: latest ? `Last: ${formatDate(latest.cutoffDate)}` : "No uploads yet",
+          color: "text-emerald-400",
+          bgColor: "bg-emerald-500/10",
+          ok: snapshotHistory.length > 0,
+        },
+      ],
     },
   ];
 
@@ -85,7 +152,7 @@ export default async function AdminPage() {
       <div className="pt-1">
         <h1 className="text-xl font-bold text-foreground tracking-tight">Admin Dashboard</h1>
         <p className="text-sm text-muted-foreground mt-0.5">
-          Portfolio data management · monthly value entry
+          What you enter here drives what investors see on the portal
         </p>
       </div>
 
@@ -100,51 +167,130 @@ export default async function AdminPage() {
           : <Database className="w-4 h-4 shrink-0 mt-0.5" />
         }
         <div>
-          <p className="font-semibold">
-            {isDbEnabled ? "Database connected" : "Database not configured"}
-          </p>
+          <p className="font-semibold">{isDbEnabled ? "Database connected" : "Database not configured"}</p>
           <p className="text-xs mt-0.5 opacity-80">
-            {isDbEnabled
-              ? "All data entry modules are active."
-              : "Add DATABASE_URL in .env to enable admin data saving."}
+            {isDbEnabled ? "All data entry modules are active." : "Add DATABASE_URL in .env to enable admin data saving."}
           </p>
         </div>
       </div>
 
-      {/* Section cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {sections.map(({ href, icon: Icon, title, description, stat, color, bgColor, ok }) => (
-          <Link
-            key={href}
-            href={href}
-            className="group rounded-2xl border border-border/60 p-5 hover:border-border transition-all duration-200 hover:-translate-y-0.5"
-            style={{ background: "hsl(var(--card))", boxShadow: "var(--shadow-card)" }}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-start gap-3">
-                <div className={`p-2.5 rounded-xl ${bgColor} shrink-0`}>
-                  <Icon className={`w-5 h-5 ${color}`} />
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-foreground">{title}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">{description}</p>
-                </div>
-              </div>
-              <ArrowRight className="w-4 h-4 text-muted-foreground/40 group-hover:text-muted-foreground transition-colors mt-0.5 shrink-0" />
+      {/* Readiness checklist */}
+      <div
+        className="rounded-2xl border border-border/60 overflow-hidden"
+        style={{ background: "hsl(var(--card))", boxShadow: "var(--shadow-card)" }}
+      >
+        <div
+          className="flex items-center justify-between px-5 py-4 border-b border-border/60"
+          style={{ background: "hsl(222 44% 7%)" }}
+        >
+          <div className="flex items-center gap-2.5">
+            <div className="p-1.5 rounded-lg bg-secondary/60">
+              <Layers className="w-3.5 h-3.5 text-muted-foreground" />
             </div>
-            <div className="mt-4 flex items-center justify-between">
-              <p className={`font-numeric text-base font-bold ${ok ? color : "text-muted-foreground"}`}>{stat}</p>
-              {ok
-                ? <CheckCircle2 className="w-4 h-4 text-success" />
-                : <AlertCircle className="w-4 h-4 text-muted-foreground/40" />
+            <h2 className="text-sm font-semibold text-foreground">System Readiness</h2>
+          </div>
+          <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${
+            stepsComplete === steps.length
+              ? "bg-success/10 text-success border-success/20"
+              : "bg-warning/10 text-warning border-warning/20"
+          }`}>
+            {stepsComplete}/{steps.length} ready
+          </span>
+        </div>
+        <div className="divide-y divide-border/40">
+          {steps.map((step) => (
+            <div key={step.label} className="flex items-start gap-3 px-5 py-3.5">
+              {step.ok
+                ? <CheckCircle2 className="w-4 h-4 text-success shrink-0 mt-0.5" />
+                : <AlertCircle className="w-4 h-4 text-muted-foreground/40 shrink-0 mt-0.5" />
               }
+              <div className="min-w-0">
+                <p className={`text-sm font-medium ${step.ok ? "text-foreground" : "text-muted-foreground"}`}>
+                  {step.label}
+                </p>
+                <p className="text-xs text-muted-foreground/70 mt-0.5">{step.detail}</p>
+              </div>
             </div>
-          </Link>
-        ))}
+          ))}
+        </div>
       </div>
 
-      {/* Recent activity */}
-      {adminData.manualValues.length > 0 && (
+      {/* Current portfolio composition summary */}
+      {(totalNonListed > 0 || totalCash > 0) && (
+        <div
+          className="rounded-2xl border border-border/60 overflow-hidden"
+          style={{ background: "hsl(var(--card))", boxShadow: "var(--shadow-card)" }}
+        >
+          <div
+            className="px-5 py-4 border-b border-border/60"
+            style={{ background: "hsl(222 44% 7%)" }}
+          >
+            <p className="text-sm font-semibold text-foreground">Current Non-Directa Values</p>
+            <p className="text-xs text-muted-foreground mt-0.5">What will be added to Directa listed holdings in the next snapshot</p>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-y sm:divide-y-0 divide-border/40">
+            {[
+              { label: "Private Participations", value: privateParticipations, icon: TrendingUp, color: "text-purple-400" },
+              { label: "Private Loan Principal", value: privateLoanPrincipal,  icon: HandCoins,  color: "text-blue-400" },
+              { label: "Statement Cash",         value: statementCash,         icon: CreditCard, color: "text-emerald-400" },
+              { label: "Cash Outside Directa",   value: cashOutsideDirecta,    icon: Wallet,     color: "text-sky-400" },
+            ].map(({ label, value, icon: Icon, color }) => (
+              <div key={label} className="px-5 py-4">
+                <div className="flex items-center gap-1.5 mb-2">
+                  <Icon className={`w-3.5 h-3.5 ${color}`} />
+                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest leading-none">{label}</p>
+                </div>
+                <p className={`font-numeric text-lg font-bold ${value > 0 ? color : "text-muted-foreground"}`}>
+                  {value > 0 ? formatEur(value) : "—"}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Section groups */}
+      {groups.map((group) => (
+        <div key={group.label} className="space-y-3">
+          <div>
+            <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-widest">{group.label}</p>
+            <p className="text-xs text-muted-foreground/70 mt-0.5">{group.description}</p>
+          </div>
+          <div className={`grid gap-4 ${group.items.length === 1 ? "grid-cols-1 sm:max-w-sm" : "grid-cols-1 sm:grid-cols-2"}`}>
+            {group.items.map(({ href, icon: Icon, title, description, stat, color, bgColor, ok }) => (
+              <Link
+                key={href}
+                href={href}
+                className="group rounded-2xl border border-border/60 p-5 hover:border-border transition-all duration-200 hover:-translate-y-0.5"
+                style={{ background: "hsl(var(--card))", boxShadow: "var(--shadow-card)" }}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    <div className={`p-2.5 rounded-xl ${bgColor} shrink-0 mt-0.5`}>
+                      <Icon className={`w-4 h-4 ${color}`} />
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-foreground leading-snug">{title}</p>
+                      <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{description}</p>
+                    </div>
+                  </div>
+                  <ArrowRight className="w-4 h-4 text-muted-foreground/40 group-hover:text-muted-foreground transition-colors shrink-0 mt-0.5" />
+                </div>
+                <div className="mt-4 flex items-center justify-between">
+                  <p className={`font-numeric text-sm font-bold ${ok ? color : "text-muted-foreground"}`}>{stat}</p>
+                  {ok
+                    ? <CheckCircle2 className="w-4 h-4 text-success" />
+                    : <AlertCircle className="w-4 h-4 text-muted-foreground/40" />
+                  }
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
+      ))}
+
+      {/* Snapshot history */}
+      {snapshotHistory.length > 0 && (
         <div
           className="rounded-2xl border border-border/60 overflow-hidden"
           style={{ background: "hsl(var(--card))", boxShadow: "var(--shadow-card)" }}
@@ -154,46 +300,68 @@ export default async function AdminPage() {
             style={{ background: "hsl(222 44% 7%)" }}
           >
             <div className="p-1.5 rounded-lg bg-secondary/60">
-              <List className="w-3.5 h-3.5 text-muted-foreground" />
+              <Clock className="w-3.5 h-3.5 text-muted-foreground" />
             </div>
-            <h2 className="text-sm font-semibold text-foreground">Recent Entries</h2>
-            <span className="ml-auto text-[11px] text-muted-foreground">
-              {adminData.manualValues.length} total
-            </span>
+            <h2 className="text-sm font-semibold text-foreground">Snapshot History</h2>
+            <span className="ml-auto text-[11px] text-muted-foreground">Last 12 months</span>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border/60" style={{ background: "hsl(222 35% 10%)" }}>
-                  <th className="text-left px-5 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Asset</th>
-                  <th className="text-left px-5 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest hidden sm:table-cell">Type</th>
-                  <th className="text-right px-5 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Value</th>
-                  <th className="text-right px-5 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Date</th>
+                  <th className="text-left px-5 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Cut-off</th>
+                  <th className="text-left px-5 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Status</th>
+                  <th className="text-right px-5 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest hidden sm:table-cell">Portfolio value</th>
+                  <th className="text-left px-5 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest hidden md:table-cell">Approved by</th>
+                  <th className="text-center px-5 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Audit</th>
                 </tr>
               </thead>
               <tbody>
-                {adminData.manualValues.slice(0, 10).map((v) => (
+                {snapshotHistory.map((snap) => (
                   <tr
-                    key={v.id}
+                    key={snap.id}
                     className="border-b border-border/40 last:border-0 hover:bg-secondary/20 transition-colors"
                   >
                     <td className="px-5 py-3.5">
-                      <p className="text-sm font-medium text-foreground">{v.holdingName ?? v.displayName}</p>
+                      <p className="text-sm font-semibold text-foreground font-numeric">{formatDate(snap.cutoffDate)}</p>
+                      {snap.publishedAt && (
+                        <p className="text-[10px] text-muted-foreground mt-0.5">Published {formatDate(snap.publishedAt)}</p>
+                      )}
                     </td>
-                    <td className="px-5 py-3.5 hidden sm:table-cell">
-                      <span className={`px-2 py-0.5 rounded-full text-xs border ${
-                        v.itemType === "cash"
-                          ? "bg-blue-500/10 text-blue-400 border-blue-500/20"
-                          : "bg-purple-500/10 text-purple-400 border-purple-500/20"
+                    <td className="px-5 py-3.5">
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold border ${
+                        snap.status === "published"
+                          ? "bg-success/10 text-success border-success/20"
+                          : "bg-warning/10 text-warning border-warning/20"
                       }`}>
-                        {v.itemType === "cash" ? "Cash" : "Non-Listed"}
+                        {snap.status === "published"
+                          ? <CheckCircle2 className="w-3 h-3" />
+                          : <Clock className="w-3 h-3" />
+                        }
+                        {snap.status === "published" ? "Published" : "Draft"}
                       </span>
                     </td>
-                    <td className="px-5 py-3.5 text-right">
-                      <span className="font-numeric text-sm font-bold text-foreground">{formatEur(v.value)}</span>
+                    <td className="px-5 py-3.5 text-right hidden sm:table-cell">
+                      <span className="font-numeric text-sm font-bold text-foreground">{formatEur(snap.portfolioValue)}</span>
                     </td>
-                    <td className="px-5 py-3.5 text-right">
-                      <span className="text-xs text-muted-foreground">{formatDate(v.valueDate)}</span>
+                    <td className="px-5 py-3.5 hidden md:table-cell">
+                      {snap.approvedBy
+                        ? <p className="text-xs text-foreground">{snap.approvedBy}</p>
+                        : <span className="text-xs text-muted-foreground">—</span>
+                      }
+                    </td>
+                    <td className="px-5 py-3.5 text-center">
+                      {snap.hasArtifact ? (
+                        <a
+                          href={`/api/admin/snapshot-artifacts/${snap.id}`}
+                          className="inline-flex items-center gap-1 text-xs font-semibold text-primary hover:underline"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span className="hidden sm:inline">Workbook</span>
+                        </a>
+                      ) : (
+                        <FileText className="w-3.5 h-3.5 text-muted-foreground/30 mx-auto" />
+                      )}
                     </td>
                   </tr>
                 ))}

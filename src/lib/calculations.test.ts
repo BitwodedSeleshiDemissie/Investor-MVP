@@ -77,6 +77,7 @@ function makeWorkbook(overrides: Partial<{
       monthlyRow(d(2025, 3, 31), 362_517.02, 0.008366, 0.037041),
     ],
     cutoffDate: d(2026, 3, 31),
+    investorPerformance: [],
   };
 }
 
@@ -171,7 +172,8 @@ describe("computeKPIs", () => {
       incomeRow(d(2025, 9, 10), "ISHARES HY", "Distribution", 604.33),
       incomeRow(d(2025, 9, 10), "ISHARES HY", "Distribution", -156.73),
     ];
-    expect(computeKPIs(makeWorkbook({ tradeLog }), settings).distributionsTotal).toBeCloseTo(447.6, 2);
+    // totalIncome: 0 forces the tradeLog-computed net path (pmIncome takes priority when > 0)
+    expect(computeKPIs(makeWorkbook({ tradeLog, totalIncome: 0 }), settings).distributionsTotal).toBeCloseTo(447.6, 2);
   });
 });
 
@@ -195,8 +197,9 @@ describe("computeTimeseries", () => {
 
 describe("computeIRR", () => {
   it("matches investor terminal value to statement-account cash flows", () => {
+    // portfolioValue = investment amount → single-period breakeven → XIRR ≈ 0%
     const data = makeWorkbook({
-      portfolioValue: 1_700,
+      portfolioValue: 1_200,
       holdingsMv: 1_100,
       cash: 100,
       irrInvestor: [{ date: d(2025, 3, 31), cashFlow: -1_200 }],
@@ -206,6 +209,29 @@ describe("computeIRR", () => {
 
     expect(irr.investorIrr).not.toBeNull();
     expect(irr.investorIrr!).toBeCloseTo(0, 2);
+  });
+
+  it("does not double-count tracker IRR schedules that already include terminal NAV", () => {
+    const nav = 1_971_514.4958473404;
+    const data = makeWorkbook({
+      portfolioValue: nav,
+      irrInvestor: [
+        { date: d(2025, 3, 19), cashFlow: -500_000 },
+        { date: d(2025, 9, 3), cashFlow: -500_000 },
+        { date: d(2025, 9, 9), cashFlow: -500_000 },
+        { date: d(2026, 3, 15), cashFlow: -500_000 },
+        { date: d(2026, 5, 18), cashFlow: nav },
+      ],
+      irrPortfolio: [],
+    });
+    data.cutoffDate = d(2026, 5, 18);
+    data.portfolioMetrics["Fund IRR"] = -0.02091006934642792;
+    data.portfolioMetrics["Investor IRR"] = -0.02091006934642792;
+
+    const irr = computeIRR(data);
+
+    expect(irr.investorIrr).toBeCloseTo(-0.02091006934642792, 6);
+    expect(irr.fundIrr).toBeCloseTo(-0.02091006934642792, 6);
   });
 });
 

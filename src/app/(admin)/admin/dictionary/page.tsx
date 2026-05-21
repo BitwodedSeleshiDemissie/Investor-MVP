@@ -1,7 +1,7 @@
 import { Building2, Hash, Tag, ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { getAdminData } from "@/server/queries/admin";
-import { dbEnabled } from "@/db/client";
+import { dbEnabled } from "@/db/prisma";
 import { DictionaryManager } from "@/components/admin/DictionaryManager";
 
 export default async function DictionaryPage() {

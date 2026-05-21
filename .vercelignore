@@ -1,0 +1,25 @@
+.env
+.env.*
+!.env.example
+
+node_modules/
+.next/
+out/
+dist/
+build/
+
+data/
+Context of current CEO approved claude workflow that does what this investor portal should do but in excel locally/
+
+test-results/
+playwright-report/
+.claude/
+.git/
+.vercel/
+
+public/sw.js
+public/workbox-*.js
+public/swe-worker-*.js
+
+*.log
+*.tsbuildinfo

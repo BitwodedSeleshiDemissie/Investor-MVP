@@ -4,6 +4,12 @@ import { env } from "./env";
 
 export type Role = "investor" | "admin";
 
+export interface Session {
+  role: Role;
+  email?: string;
+  investorName?: string;
+}
+
 const COOKIE_NAME = "ariete-session";
 const MAX_AGE = 60 * 60 * 24 * 7; // 7 days
 
@@ -11,32 +17,42 @@ function getSecret(): Uint8Array {
   return new TextEncoder().encode(env.JWT_SECRET);
 }
 
-export async function signToken(payload: { role: Role }): Promise<string> {
-  return new SignJWT(payload)
+export function cleanDisplayName(value: string | undefined | null): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  return trimmed.replace(/^["']+|["']+$/g, "").trim() || undefined;
+}
+
+export async function signToken(payload: Session): Promise<string> {
+  const session = {
+    ...payload,
+    investorName: cleanDisplayName(payload.investorName),
+  };
+  return new SignJWT(session as unknown as Record<string, unknown>)
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime(`${MAX_AGE}s`)
     .sign(getSecret());
 }
 
-export async function verifyToken(token: string): Promise<{ role: Role } | null> {
+export async function verifyToken(token: string): Promise<Session | null> {
   try {
     const { payload } = await jwtVerify(token, getSecret());
-    return payload as { role: Role };
+    return payload as unknown as Session;
   } catch {
     return null;
   }
 }
 
-export async function getSession(): Promise<{ role: Role } | null> {
+export async function getSession(): Promise<Session | null> {
   const jar = await cookies();
   const token = jar.get(COOKIE_NAME)?.value;
   if (!token) return null;
   return verifyToken(token);
 }
 
-export async function setSessionCookie(role: Role): Promise<void> {
-  const token = await signToken({ role });
+export async function setSessionCookie(session: Session): Promise<void> {
+  const token = await signToken(session);
   const jar = await cookies();
   jar.set(COOKIE_NAME, token, {
     httpOnly: true,

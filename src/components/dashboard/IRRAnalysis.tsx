@@ -2,6 +2,8 @@ import type { IRRData, PnLBreakdown } from "@/types/portfolio";
 import { formatPctPlain, formatDate, formatEur, pnlColor } from "@/lib/utils";
 import { TrendingUp, BarChart3, Calendar } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { TermTooltip } from "@/components/ui/TermTooltip";
+import { GLOSSARY } from "@/lib/glossary";
 
 interface IRRAnalysisProps {
   irr: IRRData;
@@ -22,6 +24,7 @@ export function IRRAnalysis({ irr, pnl }: IRRAnalysisProps) {
                 <TrendingUp className="w-3.5 h-3.5 text-primary" />
               </div>
               <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Investor IRR</p>
+              <TermTooltip definition={GLOSSARY.investorIrr} />
             </div>
             <p className="font-numeric text-4xl font-bold text-gradient-gold leading-none">
               {irr.investorIrr != null ? formatPctPlain(irr.investorIrr) : "—"}
@@ -35,6 +38,7 @@ export function IRRAnalysis({ irr, pnl }: IRRAnalysisProps) {
                 <BarChart3 className="w-3.5 h-3.5 text-muted-foreground" />
               </div>
               <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Fund IRR</p>
+              <TermTooltip definition={GLOSSARY.fundIrr} />
             </div>
             <p className="font-numeric text-4xl font-bold text-foreground leading-none">
               {irr.fundIrr != null ? formatPctPlain(irr.fundIrr) : "—"}
@@ -60,9 +64,9 @@ export function IRRAnalysis({ irr, pnl }: IRRAnalysisProps) {
         <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-widest">P&amp;L Breakdown</p>
         <div className="rounded-xl border border-border/60 overflow-hidden">
           {[
-            { label: "Unrealized P&L", value: pnl.unrealized, note: "On open positions" },
-            { label: "Realized P&L",   value: pnl.realized,   note: "From closed positions" },
-            { label: "Net Total P&L",  value: pnl.netTotal,   note: "Overall total", bold: true },
+            { label: "Unrealized P&L", value: pnl.unrealized, note: "On open positions",    tooltip: GLOSSARY.unrealizedPnl },
+            { label: "Realized P&L",   value: pnl.realized,   note: "From closed positions", tooltip: GLOSSARY.realizedPnl },
+            { label: "Net Total P&L",  value: pnl.netTotal,   note: "Overall total", bold: true, tooltip: GLOSSARY.netTotalPnl },
           ].map((row, i, arr) => (
             <div
               key={row.label}
@@ -73,9 +77,12 @@ export function IRRAnalysis({ irr, pnl }: IRRAnalysisProps) {
               )}
             >
               <div>
-                <p className={cn("text-sm", row.bold ? "font-semibold text-foreground" : "text-muted-foreground")}>
-                  {row.label}
-                </p>
+                <div className="flex items-center gap-1.5">
+                  <p className={cn("text-sm", row.bold ? "font-semibold text-foreground" : "text-muted-foreground")}>
+                    {row.label}
+                  </p>
+                  <TermTooltip definition={row.tooltip} />
+                </div>
                 <p className="text-[11px] text-muted-foreground/60 mt-0.5">{row.note}</p>
               </div>
               <p className={cn(

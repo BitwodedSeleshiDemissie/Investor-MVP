@@ -1,7 +1,8 @@
 FROM node:20-alpine AS deps
 WORKDIR /app
 RUN apk add --no-cache libc6-compat
-COPY package.json package-lock.json ./
+COPY package.json package-lock.json prisma.config.ts ./
+COPY prisma ./prisma
 RUN npm ci
 
 FROM node:20-alpine AS builder
@@ -9,6 +10,7 @@ WORKDIR /app
 RUN apk add --no-cache libc6-compat
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+RUN npm run prisma:generate
 RUN npm run build
 
 FROM node:20-alpine AS runner
