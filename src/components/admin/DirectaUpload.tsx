@@ -29,6 +29,22 @@ type ConfirmResult = {
   }>;
 };
 
+type DuplicateFile = {
+  originalFilename: string;
+  canonicalFilename: string;
+  duplicateKind: "exact_file" | "same_name";
+  batchId: number;
+  filename: string;
+  monthEnd: string | null;
+  uploadedAt: string;
+  status: string;
+};
+
+type DuplicatePrompt = {
+  mode: "block" | "confirm";
+  files: DuplicateFile[];
+};
+
 function fmt(value: number): string {
   return new Intl.NumberFormat("it-IT", {
     style: "currency",
@@ -84,6 +100,7 @@ export function DirectaUpload() {
   const [publishStatus, setPublishStatus] = useState<"idle" | "publishing">("idle");
   const [result, setResult] = useState<ConfirmResult | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
+  const [duplicatePrompt, setDuplicatePrompt] = useState<DuplicatePrompt | null>(null);
 
   useEffect(() => {
     fetch("/api/admin/manual-defaults")
@@ -114,6 +131,7 @@ export function DirectaUpload() {
     setStatus("idle");
     setErrorMsg("");
     setResult(null);
+    setDuplicatePrompt(null);
   }
 
   function setItemValue(item_key: string, value: string) {
@@ -122,11 +140,42 @@ export function DirectaUpload() {
     );
   }
 
-  async function handleProcess() {
+  async function checkDuplicates(): Promise<DuplicateFile[]> {
+    const form = new FormData();
+    for (const file of files) form.append("files", file);
+    const resp = await fetch("/api/admin/directa-duplicates", { method: "POST", body: form });
+    const json = await resp.json();
+    if (!resp.ok) throw new Error(json.error ?? `HTTP ${resp.status}`);
+    return Array.isArray(json.duplicates) ? json.duplicates : [];
+  }
+
+  async function handleProcess(options: { skipDuplicateCheck?: boolean } = {}) {
     if (files.length === 0) return;
     setStatus("uploading");
     setErrorMsg("");
     setResult(null);
+    setDuplicatePrompt(null);
+
+    try {
+      if (!options.skipDuplicateCheck) {
+        const duplicates = await checkDuplicates();
+        const exactDuplicates = duplicates.filter((item) => item.duplicateKind === "exact_file");
+        if (exactDuplicates.length > 0) {
+          setDuplicatePrompt({ mode: "block", files: exactDuplicates });
+          setStatus("idle");
+          return;
+        }
+        if (duplicates.length > 0) {
+          setDuplicatePrompt({ mode: "confirm", files: duplicates });
+          setStatus("idle");
+          return;
+        }
+      }
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : String(err));
+      setStatus("error");
+      return;
+    }
 
     const form = new FormData();
     for (const file of files) form.append("files", file);
@@ -283,12 +332,83 @@ export function DirectaUpload() {
             </div>
           ))}
           <button
-            onClick={() => { setFiles([]); setStatus("idle"); setResult(null); }}
+            onClick={() => { setFiles([]); setStatus("idle"); setResult(null); setDuplicatePrompt(null); }}
             className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
             <X className="w-3.5 h-3.5" />
             Clear selection
           </button>
+        </div>
+      )}
+
+      {duplicatePrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 px-4 backdrop-blur-sm">
+          <div
+            className="w-full max-w-md rounded-2xl border border-border/70 overflow-hidden"
+            style={{ background: "hsl(var(--card))", boxShadow: "var(--shadow-card)" }}
+          >
+            <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-border/60">
+              <h3 className="text-sm font-bold text-foreground">
+                {duplicatePrompt.mode === "block" ? "File already uploaded" : "File name already exists"}
+              </h3>
+              <button
+                onClick={() => setDuplicatePrompt(null)}
+                className="rounded-lg p-1.5 text-muted-foreground/60 hover:bg-secondary/50 hover:text-foreground"
+                aria-label="Close duplicate warning"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="px-5 py-4 space-y-3">
+              <div className={`rounded-xl border px-3 py-2.5 text-xs ${
+                duplicatePrompt.mode === "block"
+                  ? "border-destructive/30 bg-destructive/10 text-destructive"
+                  : "border-warning/30 bg-warning/10 text-warning"
+              }`}>
+                <p className="font-semibold">
+                  {duplicatePrompt.mode === "block"
+                    ? "This exact Directa file has already been imported."
+                    : "A Directa file with the same name was already imported."}
+                </p>
+                <p className="mt-1 leading-relaxed opacity-90">
+                  {duplicatePrompt.mode === "block"
+                    ? "Remove the duplicate file before processing."
+                    : "Continue only if this is a corrected export; the previous file with this name will be superseded."}
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                {duplicatePrompt.files.map((item) => (
+                  <div key={`${item.duplicateKind}-${item.batchId}-${item.originalFilename}`} className="rounded-xl border border-border/50 bg-background/40 px-3 py-2">
+                    <p className="font-mono text-xs text-foreground break-all">{item.originalFilename}</p>
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      Existing batch #{item.batchId}
+                      {item.monthEnd ? ` · ${item.monthEnd}` : ""}
+                      {item.uploadedAt ? ` · ${new Date(item.uploadedAt).toLocaleString()}` : ""}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex gap-3 px-5 pb-5">
+              <button
+                onClick={() => setDuplicatePrompt(null)}
+                className="flex-1 rounded-xl border border-border/60 py-2.5 text-sm font-semibold text-foreground hover:bg-secondary/40 transition-colors"
+              >
+                Cancel
+              </button>
+              {duplicatePrompt.mode === "confirm" && (
+                <button
+                  onClick={() => handleProcess({ skipDuplicateCheck: true })}
+                  className="flex-1 rounded-xl bg-primary py-2.5 text-sm font-bold text-primary-foreground transition-opacity"
+                >
+                  Continue
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -346,7 +466,7 @@ export function DirectaUpload() {
       )}
 
       <button
-        onClick={handleProcess}
+        onClick={() => handleProcess()}
         disabled={files.length === 0 || status === "uploading" || defaultsStatus === "loading"}
         className="w-full py-3 rounded-xl text-sm font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed"
         style={{

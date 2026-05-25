@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dbEnabled, getPrisma } from "@/db/prisma";
-import { buildWorkbookData, formatDateOnly, parseCsvFile, parsePositionCsvFile } from "@/lib/directa-preprocess";
+import { buildWorkbookDataFromParsedRows, formatDateOnly, parseCsvFile, parsePositionCsvFile } from "@/lib/directa-preprocess";
 import {
   buildDeterministicChecks,
   type ReviewCheck,
@@ -22,21 +22,13 @@ import {
 } from "@/lib/calculations";
 import { getSession } from "@/lib/auth";
 import { calculationSettings, getFundSettings } from "@/server/fund-settings";
+import {
+  monthEndFromFilename,
+  readDirectaSourceDataAfterCutoff,
+  syncDirectaCsvFile,
+} from "@/server/directa-ingestion";
 import type { InvestorPerf, PortfolioSnapshot } from "@/types/portfolio";
 import type { Prisma } from "@/generated/prisma/client";
-
-function getMonthEnd(filename: string): string | null {
-  const m1 = filename.match(/(\d{4})-(\d{2})-(\d{2})/);
-  if (m1) return `${m1[1]}-${m1[2]}-${m1[3]}`;
-  const m2 = filename.match(/Ec30_(\d{1,2})_(\d{4})/i);
-  if (m2) {
-    const month = parseInt(m2[1], 10);
-    const year = parseInt(m2[2], 10);
-    const last = new Date(year, month, 0);
-    return `${year}-${String(month).padStart(2, "0")}-${String(last.getDate()).padStart(2, "0")}`;
-  }
-  return null;
-}
 
 function todayLocal(): string {
   const now = new Date();
@@ -46,10 +38,6 @@ function todayLocal(): string {
 function dbDateOnly(value: string | Date): string {
   if (value instanceof Date) return formatDateOnly(value);
   return String(value).split("T")[0];
-}
-
-function canonicalCsvFilename(filename: string): string {
-  return filename.replace(/\s+\(\d+\)(?=\.csv$)/i, "");
 }
 
 function classifyUploadedCsv(name: string, content: string): UploadedCsv {
@@ -62,20 +50,6 @@ function classifyUploadedCsv(name: string, content: string): UploadedCsv {
     positionRows,
     hasLendingOrCollateralRows: /fondi a garanzia|titoli prestati|titoli resi|totale/i.test(content),
   };
-}
-
-function dedupeStoredCsvFiles(
-  rows: Array<{ filename: string; content: string; month_end: string | null; uploaded_at: string }>
-): Array<{ filename: string; content: string; month_end: string | null; uploaded_at: string }> {
-  const byCanonicalName = new Map<string, { filename: string; content: string; month_end: string | null; uploaded_at: string }>();
-  for (const row of rows) {
-    byCanonicalName.set(canonicalCsvFilename(row.filename), { ...row, filename: canonicalCsvFilename(row.filename) });
-  }
-  return [...byCanonicalName.values()].sort((a, b) => {
-    const month = String(a.month_end ?? "").localeCompare(String(b.month_end ?? ""));
-    if (month !== 0) return month;
-    return a.filename.localeCompare(b.filename);
-  });
 }
 
 function computeFundIrrFromProfiles(
@@ -259,40 +233,23 @@ export async function POST(req: NextRequest) {
 
   const prisma = getPrisma();
 
-  // Store uploaded CSVs (upsert by filename).
+  // Store raw files and sync parsed Directa rows into relational source tables.
   const newFilenames: string[] = [];
   const uploadedCsvs: UploadedCsv[] = [];
   for (const file of uploadedFiles) {
     if (!file.name.toLowerCase().endsWith(".csv")) continue;
     const content = await file.text();
     uploadedCsvs.push(classifyUploadedCsv(file.name, content));
-    const storedName = canonicalCsvFilename(file.name);
-    const monthEnd = cutoffDateOverride ?? getMonthEnd(file.name);
-    await prisma.directa_csv_files.upsert({
-      where: { filename: storedName },
-      create: { filename: storedName, month_end: monthEnd ? new Date(monthEnd) : null, content },
-      update: { content, uploaded_at: new Date() },
+    const synced = await syncDirectaCsvFile({
+      fileName: file.name,
+      content,
+      monthEnd: cutoffDateOverride ?? monthEndFromFilename(file.name),
+      uploadedBy: session.email ?? "admin",
     });
-    newFilenames.push(storedName);
+    newFilenames.push(synced.canonicalFilename);
   }
   if (newFilenames.length === 0) {
     return NextResponse.json({ error: "No valid CSV files found (expected .csv)" }, { status: 400 });
-  }
-
-  // Load full CSV history.
-  const storedFileRows = await prisma.$queryRaw<Array<{
-    filename: string;
-    content: string;
-    month_end: string | null;
-    uploaded_at: string;
-  }>>`
-    SELECT filename, content, month_end::text, uploaded_at::text
-    FROM directa_csv_files
-    ORDER BY month_end ASC NULLS LAST, uploaded_at ASC, filename ASC
-  `;
-  const storedFiles = dedupeStoredCsvFiles(storedFileRows);
-  if (storedFiles.length === 0) {
-    return NextResponse.json({ error: "No CSV files stored" }, { status: 400 });
   }
 
   const previousRows = await prisma.$queryRaw<Array<{ id: bigint; payload: PortfolioSnapshot }>>`
@@ -306,16 +263,21 @@ export async function POST(req: NextRequest) {
   const previousSnapshotId = previousRows[0] ? Number(previousRows[0].id) : null;
   const previousSnapshot = previousRows[0]?.payload ?? null;
   const previousCutoffDate = previousSnapshot?.cutoffDate ?? null;
-  const filesForSnapshot = previousCutoffDate
-    ? storedFiles.filter((file) => !file.month_end || file.month_end > previousCutoffDate)
-    : storedFiles;
-  if (filesForSnapshot.length === 0) {
+
+  const sourceData = await readDirectaSourceDataAfterCutoff(previousCutoffDate);
+  if (sourceData.batches.length === 0) {
     return NextResponse.json(
       { error: "No new Directa statement files were found after the current published snapshot. Upload a later Estratto Conto CSV or select the correct snapshot month." },
       { status: 400 }
     );
   }
-  const usedCsvs = filesForSnapshot.map((file) => classifyUploadedCsv(file.filename, file.content));
+  const usedCsvs: UploadedCsv[] = sourceData.batches.map((batch) => ({
+    name: batch.canonicalFilename,
+    content: "",
+    statementRows: batch.statementRows,
+    positionRows: batch.positionRows,
+    hasLendingOrCollateralRows: batch.hasLendingOrCollateralRows,
+  }));
 
   const nonListedValue = formManualItems
     .filter((item) => item.item_type.toLowerCase() !== "cash")
@@ -338,8 +300,9 @@ export async function POST(req: NextRequest) {
 
   let workbook;
   try {
-    workbook = await buildWorkbookData(
-      filesForSnapshot.map((f) => ({ name: f.filename, content: f.content })),
+    workbook = await buildWorkbookDataFromParsedRows(
+      sourceData.transactions,
+      sourceData.positions,
       {
         nonListedValue,
         externalCash,
@@ -482,7 +445,7 @@ export async function POST(req: NextRequest) {
           metadata: {
             cutoffDate: payload.cutoffDate,
             sourceFiles: newFilenames,
-            storedFiles: storedFiles.map((file) => file.filename),
+            storedBatches: sourceData.batches.map((batch) => batch.canonicalFilename),
             generatedFrom: "statement_csv_upload",
           } as Prisma.InputJsonValue,
         },
@@ -510,7 +473,7 @@ export async function POST(req: NextRequest) {
     previousDirectaCash: previousDirectaCashForComparison(previousSnapshot),
     previousHoldingsCount: previousSnapshot?.holdings?.length ?? null,
     auditFileName,
-    filesStored: storedFiles.length,
+    filesStored: sourceData.batches.length,
     newFiles: newFilenames,
     profileInvestorCount: profileRows.length,
     profileFundIrr,

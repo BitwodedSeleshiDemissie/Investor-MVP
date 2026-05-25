@@ -71,6 +71,88 @@ model directa_csv_files {
   uploaded_at DateTime  @default(now()) @db.Timestamptz(6)
 }
 
+model directa_upload_batches {
+  id                    BigInt                  @id @default(autoincrement())
+  filename              String
+  canonical_filename    String
+  file_hash             String                  @unique
+  month_end             DateTime?               @db.Date
+  uploaded_by           String                  @default("admin")
+  uploaded_at           DateTime                @default(now()) @db.Timestamptz(6)
+  status                String                  @default("imported")
+  transaction_row_count Int                     @default(0)
+  position_row_count    Int                     @default(0)
+  has_lending_or_collateral_rows Boolean        @default(false)
+  statement_cash        Float?
+  raw_file_id           BigInt?
+  directa_cash_balances directa_cash_balances[]
+  directa_positions     directa_positions[]
+  directa_transactions  directa_transactions[]
+
+  @@index([month_end, uploaded_at], map: "idx_directa_upload_batches_month")
+  @@index([canonical_filename], map: "idx_directa_upload_batches_canonical")
+}
+
+model directa_transactions {
+  id                 BigInt                 @id @default(autoincrement())
+  upload_batch_id    BigInt
+  row_number         Int
+  row_hash           String                 @unique
+  source_file        String
+  file_date          DateTime?              @db.Date
+  trade_date         DateTime               @db.Date
+  settlement_date    DateTime?              @db.Date
+  security_name      String                 @default("")
+  reference          String                 @default("")
+  transaction_type   String
+  tipo               String?
+  price              Float?
+  currency           String                 @default("EUR")
+  quantity           Float?
+  amount             Float?
+  commission         Float?
+  created_at         DateTime               @default(now()) @db.Timestamptz(6)
+  directa_upload_batches directa_upload_batches @relation(fields: [upload_batch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([trade_date], map: "idx_directa_transactions_trade_date")
+  @@index([security_name], map: "idx_directa_transactions_security")
+  @@index([upload_batch_id], map: "idx_directa_transactions_batch")
+}
+
+model directa_positions {
+  id                    BigInt                  @id @default(autoincrement())
+  upload_batch_id       BigInt
+  row_number            Int
+  row_hash              String                  @unique
+  source_file           String
+  file_date             DateTime?               @db.Date
+  month_end             DateTime?               @db.Date
+  security_name         String
+  quantity              Float
+  price                 Float
+  market_value          Float
+  created_at            DateTime                @default(now()) @db.Timestamptz(6)
+  directa_upload_batches directa_upload_batches @relation(fields: [upload_batch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([month_end], map: "idx_directa_positions_month")
+  @@index([security_name], map: "idx_directa_positions_security")
+  @@index([upload_batch_id], map: "idx_directa_positions_batch")
+}
+
+model directa_cash_balances {
+  id                    BigInt                  @id @default(autoincrement())
+  upload_batch_id       BigInt
+  row_hash              String                  @unique
+  source_file           String
+  month_end             DateTime?               @db.Date
+  statement_cash        Float
+  created_at            DateTime                @default(now()) @db.Timestamptz(6)
+  directa_upload_batches directa_upload_batches @relation(fields: [upload_batch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([month_end], map: "idx_directa_cash_balances_month")
+  @@index([upload_batch_id], map: "idx_directa_cash_balances_batch")
+}
+
 model investor_profiles {
   id                BigInt   @id @default(autoincrement())
   name              String   @unique

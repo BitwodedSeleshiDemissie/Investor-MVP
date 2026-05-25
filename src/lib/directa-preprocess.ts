@@ -781,20 +781,21 @@ export interface BaselineSnapshotInput {
   timeseries: NavPoint[];
 }
 
-export async function buildWorkbookData(
-  csvFiles: { name: string; content: string }[],
+export async function buildWorkbookDataFromParsedRows(
+  parsedRows: RawRow[],
+  parsedPositions: PositionPriceRow[],
   overlays: AdminOverlays
 ): Promise<WorkbookData> {
-  // Step 1: parse all CSV files
-  const allRows: RawRow[] = openingRowsFromBaseline(overlays.baselineSnapshot ?? undefined);
+  // Step 1: combine the published baseline opening rows with persisted Directa rows.
+  const allRows: RawRow[] = [
+    ...openingRowsFromBaseline(overlays.baselineSnapshot ?? undefined),
+    ...parsedRows,
+  ];
   const positions: PositionMap = new Map();
-  for (const f of csvFiles) {
-    allRows.push(...parseCsvFile(f.content, f.name));
-    for (const row of parsePositionCsvFile(f.content, f.name)) {
-      if (row.price > 0 || row.marketValue > 0) {
-        const current = positions.get(row.security);
-        if (isNewerPosition(row, current)) positions.set(row.security, row);
-      }
+  for (const row of parsedPositions) {
+    if (row.price > 0 || row.marketValue > 0) {
+      const current = positions.get(row.security);
+      if (isNewerPosition(row, current)) positions.set(row.security, row);
     }
   }
   allRows.sort((a, b) => a.date.getTime() - b.date.getTime());
@@ -901,4 +902,18 @@ export async function buildWorkbookData(
   };
 
   return { tradeLog, holdings, portfolioMetrics, irrInvestor, irrPortfolio, monthlyReturns, cutoffDate: cutoff, investorPerformance: [] };
+}
+
+export async function buildWorkbookData(
+  csvFiles: { name: string; content: string }[],
+  overlays: AdminOverlays
+): Promise<WorkbookData> {
+  const parsedRows: RawRow[] = [];
+  const parsedPositions: PositionPriceRow[] = [];
+  for (const f of csvFiles) {
+    parsedRows.push(...parseCsvFile(f.content, f.name));
+    parsedPositions.push(...parsePositionCsvFile(f.content, f.name));
+  }
+
+  return buildWorkbookDataFromParsedRows(parsedRows, parsedPositions, overlays);
 }

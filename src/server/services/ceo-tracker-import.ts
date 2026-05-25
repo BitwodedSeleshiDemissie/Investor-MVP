@@ -465,7 +465,7 @@ export async function importCeoTrackerWorkbook({
       },
       select: { id: true },
     });
-  });
+  }, { timeout: 30_000 });
 
   return resultFromSnapshot(Number(result.id), payload, false);
 }
