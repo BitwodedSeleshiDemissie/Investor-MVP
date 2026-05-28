@@ -251,7 +251,7 @@ async function callCeoUpload(workbookData: ReturnType<typeof makeWorkbookData>) 
   const form = new FormData();
   form.append(
     "file",
-    new File([Buffer.alloc(100)], "tracker-2025-03.xlsx", {
+    new File([Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.alloc(96)])], "tracker-2025-03.xlsx", {
       type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     })
   );
