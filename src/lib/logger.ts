@@ -29,6 +29,23 @@ export const logger = pino(
   {
     level: env.LOG_LEVEL || (isProduction ? "info" : "debug"),
     timestamp: pino.stdTimeFunctions.isoTime,
+    redact: {
+      paths: [
+        "req.headers.authorization",
+        "req.headers.cookie",
+        "password",
+        "*.password",
+        "email",
+        "*.email",
+        "token",
+        "*.token",
+        "jwt",
+        "*.jwt",
+        "apiKey",
+        "*.apiKey",
+      ],
+      censor: "[REDACTED]",
+    },
   },
   pino.multistream(streams)
 );

@@ -204,9 +204,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid form data" }, { status: 400 });
   }
 
+  const MAX_CSV_BYTES = 10 * 1024 * 1024; // 10 MB per CSV
+  const MAX_MANUAL_INPUTS_BYTES = 64 * 1024; // 64 KB
+
   const uploadedFiles = formData.getAll("files") as File[];
   if (uploadedFiles.length === 0) {
     return NextResponse.json({ error: "No CSV files uploaded" }, { status: 400 });
+  }
+  for (const file of uploadedFiles) {
+    if (file.size > MAX_CSV_BYTES) {
+      return NextResponse.json({ error: `File "${file.name}" exceeds the 10 MB per-file limit` }, { status: 413 });
+    }
   }
 
   const cutoffDateOverride = (formData.get("cutoffDateOverride") as string | null) ?? null;
@@ -221,6 +229,9 @@ export async function POST(req: NextRequest) {
   };
   let formManualItems: ManualInputItem[] | null = null;
   if (manualInputsRaw) {
+    if (manualInputsRaw.length > MAX_MANUAL_INPUTS_BYTES) {
+      return NextResponse.json({ error: "manualInputs payload too large" }, { status: 413 });
+    }
     try {
       formManualItems = JSON.parse(manualInputsRaw) as ManualInputItem[];
     } catch {
@@ -317,9 +328,8 @@ export async function POST(req: NextRequest) {
           : null,
       }
     );
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: `Preprocessing failed: ${msg}` }, { status: 422 });
+  } catch {
+    return NextResponse.json({ error: "Preprocessing failed. Verify the uploaded CSV files are valid Directa exports." }, { status: 422 });
   }
 
   const kpis = computeKPIs(workbook, settings);
@@ -453,9 +463,8 @@ export async function POST(req: NextRequest) {
       return inserted;
     });
     snapshotId = Number(result.id);
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    return NextResponse.json({ error: `Snapshot save failed: ${msg}` }, { status: 500 });
+  } catch {
+    return NextResponse.json({ error: "Snapshot save failed. Check server logs for details." }, { status: 500 });
   }
 
   return NextResponse.json({

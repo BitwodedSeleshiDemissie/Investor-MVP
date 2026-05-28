@@ -1,6 +1,13 @@
 import * as XLSX from "xlsx";
 import type { WorkbookData } from "./excel-loader";
 
+// Prefix formula-trigger characters so Excel/Sheets cannot execute injected formulas (F-16)
+function escapeCell(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  if (/^[=+\-@\t\r]/.test(value)) return `'${value}`;
+  return value;
+}
+
 function dateCell(value: Date): Date {
   return new Date(value.getFullYear(), value.getMonth(), value.getDate());
 }
@@ -56,9 +63,9 @@ export function buildAuditWorkbookBuffer(workbook: WorkbookData): Buffer {
       "Weight",
     ],
     ...workbook.holdings.map((h) => [
-      h.security,
-      h.assetClass,
-      h.currency,
+      escapeCell(h.security),
+      escapeCell(h.assetClass),
+      escapeCell(h.currency),
       h.shares,
       h.avgCost,
       h.costBasis,
@@ -92,10 +99,10 @@ export function buildAuditWorkbookBuffer(workbook: WorkbookData): Buffer {
     ...workbook.tradeLog.map((t) => [
       dateCell(t.date),
       "",
-      t.security,
-      t.assetClass,
-      t.currency,
-      t.type,
+      escapeCell(t.security),
+      escapeCell(t.assetClass),
+      escapeCell(t.currency),
+      escapeCell(t.type),
       t.shares,
       t.price,
       t.netAmount,

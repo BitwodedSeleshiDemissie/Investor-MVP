@@ -29,6 +29,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid form data" }, { status: 400 });
   }
 
+  const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // 50 MB
+
   const file = formData.get("file") as File | null;
   if (!file) {
     return NextResponse.json({ error: "No file uploaded (expected field name: 'file')" }, { status: 400 });
@@ -37,14 +39,20 @@ export async function POST(req: NextRequest) {
   if (ext !== "xlsx" && ext !== "xlsm") {
     return NextResponse.json({ error: "Expected .xlsx or .xlsm CEO tracker workbook" }, { status: 400 });
   }
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return NextResponse.json({ error: "File exceeds 50 MB limit" }, { status: 413 });
+  }
 
   let workbookData;
   try {
     const buffer = Buffer.from(await file.arrayBuffer());
+    // XLSX/XLSM files are ZIP archives; verify the PK magic bytes
+    if (buffer[0] !== 0x50 || buffer[1] !== 0x4b) {
+      return NextResponse.json({ error: "File content does not match an Office Open XML workbook" }, { status: 400 });
+    }
     workbookData = loadWorkbookFromBuffer(buffer);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: `Failed to parse workbook: ${msg}` }, { status: 422 });
+  } catch {
+    return NextResponse.json({ error: "Failed to parse workbook. Ensure the file is a valid .xlsx or .xlsm." }, { status: 422 });
   }
 
   try {
@@ -60,7 +68,6 @@ export async function POST(req: NextRequest) {
     if (error instanceof CeoTrackerImportError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
-    const msg = error instanceof Error ? error.message : String(error);
-    return NextResponse.json({ error: `Snapshot save failed: ${msg}` }, { status: 500 });
+    return NextResponse.json({ error: "Snapshot save failed. Check server logs for details." }, { status: 500 });
   }
 }

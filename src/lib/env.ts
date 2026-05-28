@@ -3,7 +3,8 @@ import { z } from "zod";
 
 export const env = createEnv({
   server: {
-    JWT_SECRET: z.string().min(16),
+    JWT_SECRET: z.string().min(32),
+    AUTH_USERS: z.string().optional(),
     ANTHROPIC_API_KEY: z.string().optional(),
     EXCEL_PATH: z.string().default("./bootstrap/Ariete_Capital_Investment_Tracker.xlsx"),
     DATABASE_URL: z.string().optional(),
@@ -26,6 +27,7 @@ export const env = createEnv({
   },
   runtimeEnv: {
     JWT_SECRET: process.env.JWT_SECRET,
+    AUTH_USERS: process.env.AUTH_USERS,
     ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
     EXCEL_PATH: process.env.EXCEL_PATH,
     DATABASE_URL: process.env.DATABASE_URL,

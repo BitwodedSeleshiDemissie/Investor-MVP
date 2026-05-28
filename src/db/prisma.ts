@@ -11,7 +11,7 @@ function getPrismaClient(): PrismaClient {
     const pool = new Pool({
       connectionString: env.DATABASE_URL!,
       max: 10,
-      ssl: env.DATABASE_SSL ? { rejectUnauthorized: false } : undefined,
+      ssl: env.DATABASE_SSL ? { rejectUnauthorized: true } : undefined,
     });
     const adapter = new PrismaPg(pool);
     g.prisma = new PrismaClient({ adapter });
