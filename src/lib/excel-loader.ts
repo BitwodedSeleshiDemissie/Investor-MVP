@@ -1,6 +1,7 @@
 import * as XLSX from "xlsx";
 import path from "path";
 import fs from "fs";
+import { resolveIsin } from "./isin";
 
 export interface InvestorPerfRow {
   name: string;
@@ -50,6 +51,7 @@ export interface TradeRow {
 
 export interface HoldingRow {
   security: string;
+  isin?: string;
   assetClass: string;
   currency: string;
   shares: number;
@@ -387,9 +389,10 @@ function parseWorkbook(wb: XLSX.WorkBook): WorkbookData {
     const rawPositions: HoldingRow[] = [];
     let sumMv = 0;
     for (let r = 4; r <= range.e.r; r++) {
-      const isin = cellVal(posSheet, r, 1)?.toString().trim();
-      if (!isin) continue;
-      const nome = cellVal(posSheet, r, 2)?.toString().trim() ?? isin;
+      const rawIsin = cellVal(posSheet, r, 1)?.toString().trim();
+      if (!rawIsin) continue;
+      const isin = resolveIsin(rawIsin);
+      const nome = cellVal(posSheet, r, 2)?.toString().trim() ?? rawIsin;
       const valuta = cellVal(posSheet, r, 3)?.toString().trim() ?? "EUR";
       const qtyNetta = toNum(cellVal(posSheet, r, 6));
       if (qtyNetta <= 0) continue;
@@ -410,6 +413,7 @@ function parseWorkbook(wb: XLSX.WorkBook): WorkbookData {
 
       rawPositions.push({
         security: nome,
+        isin,
         assetClass: inferAssetClass(nome),
         currency: valuta,
         shares: qtyNetta,
@@ -501,6 +505,7 @@ function parseWorkbook(wb: XLSX.WorkBook): WorkbookData {
         if (!security) continue;
         holdings.push({
           security,
+          isin: resolveIsin(security),
           assetClass: cellVal(auditHoldings, r, 1)?.toString() ?? "",
           currency: cellVal(auditHoldings, r, 2)?.toString() ?? "EUR",
           shares: toNum(cellVal(auditHoldings, r, 3)),

@@ -5,9 +5,9 @@
   SlidersHorizontal,
 } from "lucide-react";
 import Link from "next/link";
-import { getFixedPortfolioValues, getInvestorProfiles, getSnapshotHistory } from "@/server/queries/admin";
+import { getAdminFreshness, getFixedPortfolioValues, getInvestorProfiles, getSnapshotHistory } from "@/server/queries/admin";
 import { dbEnabled } from "@/db/prisma";
-import { formatEur, formatDate } from "@/lib/utils";
+import { formatEur, formatDate, formatDateTime } from "@/lib/utils";
 
 type SectionItem = {
   href: string;
@@ -22,10 +22,11 @@ type SectionItem = {
 
 export default async function AdminPage() {
   const isDbEnabled = dbEnabled();
-  const [portfolioValues, investorProfiles, snapshotHistory] = await Promise.all([
+  const [portfolioValues, investorProfiles, snapshotHistory, adminFreshness] = await Promise.all([
     getFixedPortfolioValues(),
     getInvestorProfiles(),
     getSnapshotHistory(),
+    getAdminFreshness(),
   ]);
 
   const {
@@ -39,12 +40,19 @@ export default async function AdminPage() {
   const totalNonListed  = privateParticipations + privateLoanPrincipal;
   const totalCash       = statementCash + cashOutsideDirecta;
   const latest          = snapshotHistory[0];
+  const latestSourceFiles = latest?.sourceFile
+    ? latest.sourceFile.split(",").map((file) => file.trim()).filter(Boolean)
+    : [];
+  const latestSourceLabel = latestSourceFiles.length > 0
+    ? latestSourceFiles.slice(0, 2).join(", ") + (latestSourceFiles.length > 2 ? ` +${latestSourceFiles.length - 2}` : "")
+    : "No source file recorded";
+  const latestTransactionsThrough = latest?.transactionsThrough ?? latest?.cutoffDate ?? "";
 
   const steps = [
     {
       label: "Baseline snapshot uploaded",
       detail: latest
-        ? `Latest: ${formatDate(latest.cutoffDate)} · ${latest.status}`
+        ? `Latest: ${formatDate(latest.cutoffDate)} · transactions through ${formatDate(latestTransactionsThrough)} · ${latest.status}`
         : "No snapshot — upload the CEO tracker workbook",
       ok: snapshotHistory.length > 0,
     },
@@ -138,7 +146,7 @@ export default async function AdminPage() {
           icon: Upload,
           title: "Upload Data",
           description: "Directa CSVs (listed holdings, trades, income, risk series) and CEO tracker workbook",
-          stat: latest ? `Last: ${formatDate(latest.cutoffDate)}` : "No uploads yet",
+          stat: latest ? `Last upload: ${formatDateTime(latest.createdAt)}` : "No uploads yet",
           color: "text-emerald-400",
           bgColor: "bg-emerald-500/10",
           ok: snapshotHistory.length > 0,
@@ -173,6 +181,47 @@ export default async function AdminPage() {
           </p>
         </div>
       </div>
+
+      {/* Data freshness */}
+      {latest && (
+        <div
+          className="rounded-2xl border border-border/60 overflow-hidden"
+          style={{ background: "hsl(var(--card))", boxShadow: "var(--shadow-card)" }}
+        >
+          <div
+            className="flex items-center gap-2.5 px-5 py-4 border-b border-border/60"
+            style={{ background: "hsl(222 44% 7%)" }}
+          >
+            <div className="p-1.5 rounded-lg bg-secondary/60">
+              <Clock className="w-3.5 h-3.5 text-muted-foreground" />
+            </div>
+            <h2 className="text-sm font-semibold text-foreground">Data Freshness</h2>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-border/40">
+            <div className="px-5 py-4">
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Last upload</p>
+              <p className="mt-1 font-numeric text-sm font-semibold text-foreground">{formatDateTime(latest.createdAt)}</p>
+            </div>
+            <div className="px-5 py-4">
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Transactions through</p>
+              <p className="mt-1 font-numeric text-sm font-semibold text-foreground">{formatDate(latestTransactionsThrough)}</p>
+            </div>
+            <div className="px-5 py-4">
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Source files</p>
+              <p className="mt-1 text-sm font-semibold text-foreground truncate" title={latest.sourceFile || latestSourceLabel}>
+                {latestSourceLabel}
+              </p>
+            </div>
+            <div className="px-5 py-4">
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Last admin update</p>
+              <p className="mt-1 font-numeric text-sm font-semibold text-foreground">{formatDateTime(adminFreshness.lastAdminUpdateAt)}</p>
+              {adminFreshness.lastAdminUpdateArea && (
+                <p className="mt-0.5 text-[10px] text-muted-foreground">{adminFreshness.lastAdminUpdateArea}</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Readiness checklist */}
       <div
@@ -324,6 +373,10 @@ export default async function AdminPage() {
                   >
                     <td className="px-5 py-3.5">
                       <p className="text-sm font-semibold text-foreground font-numeric">{formatDate(snap.cutoffDate)}</p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">
+                        Transactions through {formatDate(snap.transactionsThrough ?? snap.cutoffDate)}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">Uploaded {formatDateTime(snap.createdAt)}</p>
                       {snap.publishedAt && (
                         <p className="text-[10px] text-muted-foreground mt-0.5">Published {formatDate(snap.publishedAt)}</p>
                       )}

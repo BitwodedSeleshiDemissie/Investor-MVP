@@ -324,4 +324,61 @@ describe("Statement preprocessing MVP flow", () => {
     expect(workbook.holdings.find((h) => h.security === "BOT ZC DEC25 A EUR")?.shares).toBe(0);
     expect(workbook.monthlyReturns.at(-1)?.nav).toBeCloseTo(100_200, 6);
   });
+
+  it("carries ISINs from Directa references into holdings", async () => {
+    const { buildWorkbookData } = await import("./directa-preprocess");
+
+    const statement = `"Ariete Capital S.r.l.";1/06/2026;10:00:00
+"Estratto Conto   dal";1/05/2026;"al";31/05/2026
+
+"data";"valuta";"titolo";"riferim.";"Prezzo";;"quantita'";"importo EUR";"comm."
+1/05/2026;;"Saldo Iniziale";"";;;;1000,00;
+5/05/2026;7/05/2026;"MVP TEST SECURITY";"US0378331005";10,00000;EUR;10;-100,00;
+`;
+
+    const workbook = await buildWorkbookData(
+      [{ name: "Estratto Conto 2026-05-31.csv", content: statement }],
+      { nonListedValue: 0, externalCash: 0, capitalCommitted: 1_000 }
+    );
+
+    expect(workbook.holdings.find((h) => h.security === "MVP TEST SECURITY")?.isin).toBe("US0378331005");
+  });
+
+  it("does not infer ISINs from security names alone", async () => {
+    const { buildWorkbookData } = await import("./directa-preprocess");
+
+    const statement = `"Ariete Capital S.r.l.";1/06/2026;10:00:00
+"Estratto Conto   dal";1/05/2026;"al";31/05/2026
+
+"data";"valuta";"titolo";"riferim.";"Prezzo";;"quantita'";"importo EUR";"comm."
+1/05/2026;;"Saldo Iniziale";"";;;;1000,00;
+5/05/2026;7/05/2026;"ENEL";"06009525900043";10,00000;EUR;10;-100,00;
+`;
+
+    const workbook = await buildWorkbookData(
+      [{ name: "Estratto Conto 2026-05-31.csv", content: statement }],
+      { nonListedValue: 0, externalCash: 0, capitalCommitted: 1_000 }
+    );
+
+    expect(workbook.holdings.find((h) => h.security === "ENEL")?.isin).toBe("");
+  });
+
+  it("rejects malformed ISIN-looking references", async () => {
+    const { buildWorkbookData } = await import("./directa-preprocess");
+
+    const statement = `"Ariete Capital S.r.l.";1/06/2026;10:00:00
+"Estratto Conto   dal";1/05/2026;"al";31/05/2026
+
+"data";"valuta";"titolo";"riferim.";"Prezzo";;"quantita'";"importo EUR";"comm."
+1/05/2026;;"Saldo Iniziale";"";;;;1000,00;
+5/05/2026;7/05/2026;"MVP TEST SECURITY";"US1234567890";10,00000;EUR;10;-100,00;
+`;
+
+    const workbook = await buildWorkbookData(
+      [{ name: "Estratto Conto 2026-05-31.csv", content: statement }],
+      { nonListedValue: 0, externalCash: 0, capitalCommitted: 1_000 }
+    );
+
+    expect(workbook.holdings.find((h) => h.security === "MVP TEST SECURITY")?.isin).toBe("");
+  });
 });

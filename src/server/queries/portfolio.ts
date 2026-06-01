@@ -1,6 +1,7 @@
 import { dbEnabled, getPrisma } from "@/db/prisma";
 import { cleanDisplayName } from "@/lib/auth";
 import { recomputeRiskFromTimeseries } from "@/lib/calculations";
+import { resolveIsin } from "@/lib/isin";
 import {
   calculationSettings,
   DEFAULT_FUND_SETTINGS,
@@ -8,6 +9,13 @@ import {
   type FundSettings,
 } from "@/server/fund-settings";
 import type { InvestorPerf, NavPoint, PortfolioComposition, PortfolioSnapshot } from "@/types/portfolio";
+
+type SnapshotDbRow = {
+  as_of_date: string | Date;
+  created_at: string | Date | null;
+  source_file: string | null;
+  payload: PortfolioSnapshot;
+};
 
 type ManualOverlayRow = {
   item_key: string;
@@ -25,6 +33,26 @@ function dateOnly(value: string | Date): string {
     ].join("-");
   }
   return value.includes("T") ? value.split("T")[0] : value;
+}
+
+function dateTime(value: string | Date | null | undefined): string | null {
+  if (!value) return null;
+  if (value instanceof Date) return value.toISOString();
+  return value;
+}
+
+function splitSourceFiles(value: string | null | undefined): string[] {
+  return (value ?? "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function csvSourceFiles(snapshot: PortfolioSnapshot, row: SnapshotDbRow): string[] {
+  const files = snapshot.dataFreshness?.sourceFiles?.length
+    ? snapshot.dataFreshness.sourceFiles
+    : splitSourceFiles(row.source_file);
+  return files.filter((file) => file.toLowerCase().endsWith(".csv"));
 }
 
 function cloneSnapshot(snapshot: PortfolioSnapshot): PortfolioSnapshot {
@@ -89,6 +117,12 @@ function emptyPortfolioSnapshot(
         "No published portfolio snapshot exists yet. Admin: upload the CEO tracker workbook to initialize the portal.",
     ],
     investorPerformance: [],
+    dataFreshness: {
+      lastUploadAt: null,
+      transactionsThrough: today,
+      positionsAsOf: today,
+      sourceFiles: [],
+    },
     overlaysFrozen: true,
     frozenAt: today,
     overlaySources: {
@@ -102,10 +136,10 @@ function emptyPortfolioSnapshot(
   };
 }
 
-async function readLatestSnapshot(): Promise<{ as_of_date: string; payload: PortfolioSnapshot } | null> {
+async function readLatestSnapshot(): Promise<SnapshotDbRow | null> {
   const prisma = getPrisma();
-  const rows = await prisma.$queryRaw<Array<{ as_of_date: string; payload: PortfolioSnapshot }>>`
-    SELECT as_of_date, payload
+  const rows = await prisma.$queryRaw<SnapshotDbRow[]>`
+    SELECT as_of_date, created_at, source_file, payload
     FROM portfolio_snapshots
     WHERE COALESCE(source_file, '') NOT ILIKE 'CEO tracker context:%'
       AND publication_status = 'published'
@@ -114,14 +148,55 @@ async function readLatestSnapshot(): Promise<{ as_of_date: string; payload: Port
   `;
   if (rows[0]) return rows[0];
 
-  const fallback = await prisma.$queryRaw<Array<{ as_of_date: string; payload: PortfolioSnapshot }>>`
-    SELECT as_of_date, payload
+  const fallback = await prisma.$queryRaw<SnapshotDbRow[]>`
+    SELECT as_of_date, created_at, source_file, payload
     FROM portfolio_snapshots
     WHERE publication_status = 'published'
     ORDER BY as_of_date DESC, created_at DESC
     LIMIT 1
   `;
   return fallback[0] ?? null;
+}
+
+async function readTransactionsThrough(snapshot: PortfolioSnapshot, row: SnapshotDbRow): Promise<string | null> {
+  const prisma = getPrisma();
+  const cutoffDate = snapshot.cutoffDate || dateOnly(row.as_of_date);
+  const sourceFiles = csvSourceFiles(snapshot, row);
+
+  if (sourceFiles.length > 0) {
+    const rows = await prisma.$queryRaw<Array<{ transaction_date: Date | null }>>`
+      SELECT MAX(trade_date) AS transaction_date
+      FROM directa_transactions
+      WHERE source_file = ANY(${sourceFiles}::text[])
+    `;
+    if (rows[0]?.transaction_date) return dateOnly(rows[0].transaction_date);
+  }
+
+  const cutoff = new Date(`${cutoffDate}T00:00:00`);
+  const rows = await prisma.$queryRaw<Array<{ transaction_date: Date | null }>>`
+    SELECT MAX(trade_date) AS transaction_date
+    FROM directa_transactions
+    WHERE trade_date <= ${cutoff}
+  `;
+  return rows[0]?.transaction_date ? dateOnly(rows[0].transaction_date) : null;
+}
+
+async function addReadMetadata(snapshot: PortfolioSnapshot, row: SnapshotDbRow): Promise<void> {
+  const cutoffDate = snapshot.cutoffDate || dateOnly(row.as_of_date);
+  const transactionsThrough = await readTransactionsThrough(snapshot, row);
+  snapshot.cutoffDate = cutoffDate;
+  snapshot.dataFreshness = {
+    lastUploadAt: snapshot.dataFreshness?.lastUploadAt ?? dateTime(row.created_at),
+    transactionsThrough: transactionsThrough ?? snapshot.dataFreshness?.transactionsThrough ?? cutoffDate,
+    positionsAsOf: snapshot.dataFreshness?.positionsAsOf ?? cutoffDate,
+    sourceFiles: snapshot.dataFreshness?.sourceFiles?.length
+      ? snapshot.dataFreshness.sourceFiles
+      : splitSourceFiles(row.source_file),
+  };
+  snapshot.holdings = (snapshot.holdings ?? []).map((holding) => ({
+    ...holding,
+    isin: holding.isin || resolveIsin(holding.security),
+  }));
 }
 
 async function readControl(): Promise<{ portfolio_id: string; investor_name: string; capital_committed: string } | null> {
@@ -368,7 +443,7 @@ export async function getPortfolioSnapshot(investorName?: string): Promise<Portf
   }
 
   const snapshot = row.payload;
-  snapshot.cutoffDate = snapshot.cutoffDate || dateOnly(row.as_of_date);
+  await addReadMetadata(snapshot, row);
 
   let result: PortfolioSnapshot;
 

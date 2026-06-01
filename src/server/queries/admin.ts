@@ -11,15 +11,22 @@ import type {
 export type SnapshotHistoryRow = {
   id: number;
   cutoffDate: string;
+  transactionsThrough: string | null;
   status: "draft" | "published";
   portfolioValue: number;
   holdingsCount: number;
   approvedBy: string | null;
+  createdAt: string | null;
   publishedAt: string | null;
   aiSummary: string;
   financeNote: string | null;
   sourceFile: string;
   hasArtifact: boolean;
+};
+
+export type AdminFreshness = {
+  lastAdminUpdateAt: string | null;
+  lastAdminUpdateArea: string | null;
 };
 
 function dateOnly(value: string | Date): string {
@@ -44,10 +51,12 @@ export async function getSnapshotHistory(): Promise<SnapshotHistoryRow[]> {
   const rows = await prisma.$queryRaw<Array<{
     id: bigint;
     as_of_date: Date;
+    transactions_through: string | null;
     publication_status: string;
     portfolio_value: string | null;
     holdings_count: number | null;
     approved_by: string | null;
+    created_at: Date;
     published_at: Date | null;
     ai_summary: string;
     finance_note: string | null;
@@ -57,10 +66,19 @@ export async function getSnapshotHistory(): Promise<SnapshotHistoryRow[]> {
     SELECT
       s.id,
       s.as_of_date,
+      COALESCE(
+        (
+          SELECT MAX(dt.trade_date)::text
+          FROM directa_transactions dt
+          WHERE dt.trade_date <= s.as_of_date
+        ),
+        s.payload -> 'dataFreshness' ->> 'transactionsThrough'
+      ) AS transactions_through,
       s.publication_status,
       (s.payload -> 'kpis' ->> 'totalPortfolioValue')::numeric AS portfolio_value,
       jsonb_array_length(s.payload -> 'holdings') AS holdings_count,
       s.approved_by,
+      s.created_at,
       s.published_at,
       s.ai_summary,
       s.finance_note,
@@ -76,16 +94,53 @@ export async function getSnapshotHistory(): Promise<SnapshotHistoryRow[]> {
   return rows.map((r) => ({
     id: Number(r.id),
     cutoffDate: dateOnly(r.as_of_date),
+    transactionsThrough: r.transactions_through ?? null,
     status: r.publication_status === "published" ? "published" : "draft",
     portfolioValue: Number(r.portfolio_value ?? 0),
     holdingsCount: Number(r.holdings_count ?? 0),
     approvedBy: r.approved_by ?? null,
+    createdAt: r.created_at ? dateTime(r.created_at) : null,
     publishedAt: r.published_at ? dateTime(r.published_at) : null,
     aiSummary: r.ai_summary ?? "",
     financeNote: r.finance_note ?? null,
     sourceFile: r.source_file ?? "",
     hasArtifact: Boolean(r.has_artifact),
   }));
+}
+
+export async function getAdminFreshness(): Promise<AdminFreshness> {
+  if (!dbEnabled()) return { lastAdminUpdateAt: null, lastAdminUpdateArea: null };
+  const prisma = getPrisma();
+  try {
+    const rows = await prisma.$queryRaw<Array<{ area: string; updated_at: Date }>>`
+      SELECT area, updated_at
+      FROM (
+        SELECT 'Snapshot upload' AS area, created_at AS updated_at
+        FROM portfolio_snapshots
+        WHERE COALESCE(source_file, '') NOT ILIKE 'CEO tracker context:%'
+        UNION ALL
+        SELECT 'Manual values' AS area, created_at AS updated_at
+        FROM admin_manual_values
+        UNION ALL
+        SELECT 'Controls' AS area, created_at AS updated_at
+        FROM admin_controls
+        UNION ALL
+        SELECT 'Investor profiles' AS area, updated_at AS updated_at
+        FROM investor_profiles
+        UNION ALL
+        SELECT 'Fund settings' AS area, updated_at AS updated_at
+        FROM fund_settings
+      ) updates
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `;
+    return {
+      lastAdminUpdateAt: rows[0]?.updated_at ? dateTime(rows[0].updated_at) : null,
+      lastAdminUpdateArea: rows[0]?.area ?? null,
+    };
+  } catch {
+    return { lastAdminUpdateAt: null, lastAdminUpdateArea: null };
+  }
 }
 
 export async function getLatestManualRows(itemType: "non_listed" | "cash"): Promise<ManualValueRow[]> {

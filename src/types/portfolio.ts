@@ -60,6 +60,7 @@ export interface TargetVsActual {
 
 export interface Holding {
   security: string;
+  isin?: string;
   assetClass: string;
   currency: string;
   shares: number;
@@ -134,6 +135,13 @@ export interface CashFormulaBreakdown {
   cash: number;
 }
 
+export interface DataFreshness {
+  lastUploadAt?: string | null;
+  transactionsThrough?: string | null;
+  positionsAsOf?: string | null;
+  sourceFiles?: string[];
+}
+
 export interface PortfolioSnapshot {
   kpis: KPIs;
   timeseries: NavPoint[];
@@ -147,6 +155,7 @@ export interface PortfolioSnapshot {
   pnl: PnLBreakdown;
   directaCash: number;
   cutoffDate: string;
+  dataFreshness?: DataFreshness;
   investorName: string;
   portfolioId: string;
   warnings: string[];

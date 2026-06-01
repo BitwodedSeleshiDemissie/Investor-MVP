@@ -4,6 +4,7 @@
 import type { WorkbookData, HoldingRow, CashFlowRow, MonthlyReturnRow } from "./excel-loader";
 import type { Holding, NavPoint } from "@/types/portfolio";
 import { dbEnabled, getPrisma } from "@/db/prisma";
+import { resolveIsin } from "./isin";
 
 // ── Tipo ──────────────────────────────────────────────────────────────────────
 
@@ -290,6 +291,7 @@ export interface RawRow {
   date: Date;
   settlement: Date | null;
   security: string;
+  isin?: string;
   reference: string;
   price: number | null;
   currency: string;
@@ -304,6 +306,7 @@ export interface PositionPriceRow {
   sourceFile: string;
   fileDate: Date | null;
   security: string;
+  isin?: string;
   quantity: number;
   price: number;
   marketValue: number;
@@ -354,6 +357,7 @@ export function parseCsvFile(content: string, filename: string): RawRow[] {
       date: d,
       settlement: parseItalianDate(parts[1]),
       security,
+      isin: resolveIsin(security, reference),
       reference,
       price,
       currency,
@@ -392,6 +396,7 @@ export function parsePositionCsvFile(content: string, filename: string): Positio
       if (headerDate) fileDate = headerDate;
     }
     const security = parts[1]?.trim().replace(/^"|"$/g, "") ?? "";
+    const isin = resolveIsin(parts[0]?.trim().replace(/^"|"$/g, ""), security, parts[2]?.trim().replace(/^"|"$/g, ""));
     const marker = parts[5]?.trim().replace(/^"|"$/g, "") ?? "";
     const markerLower = marker.toLowerCase();
     if (!security || (markerLower !== "saldo finale" && markerLower !== "totale")) continue;
@@ -406,6 +411,7 @@ export function parsePositionCsvFile(content: string, filename: string): Positio
       sourceFile: filename,
       fileDate,
       security,
+      isin,
       quantity,
       price,
       marketValue,
@@ -428,6 +434,7 @@ export function parsePositionCsvFile(content: string, filename: string): Positio
       sourceFile: filename,
       fileDate,
       security,
+      isin: current.isin || row.isin,
       quantity: quantityTotal,
       price: quantityTotal !== 0 && marketValueTotal > 0 ? marketValueTotal / quantityTotal : row.price || current.price,
       marketValue: marketValueTotal,
@@ -484,6 +491,7 @@ function openingRowsFromBaseline(baseline: BaselineSnapshotInput | undefined): R
         date: baselineDate,
         settlement: null,
         security: holding.security,
+        isin: holding.isin || resolveIsin(holding.security),
         reference: "Opening position from published snapshot",
         price: currentPrice,
         currency: holding.currency || "EUR",
@@ -557,6 +565,7 @@ function computeHoldingsFromRows(tradeRows: RawRow[], positions: PositionMap): H
     const lastRow = [...secRows].reverse().find((r) => r.price !== null);
     const position = positions.get(security);
     const tipo = secRows[secRows.length - 1].tipo;
+    const isin = position?.isin || secRows.find((r) => r.isin)?.isin || resolveIsin(security);
     const fallbackPrice = normalizedFallbackPrice(lastRow?.price ?? 0, avgCost, tipo);
     const currentPrice = position ? normalizedPositionPrice(position, shares) : fallbackPrice;
 
@@ -571,6 +580,7 @@ function computeHoldingsFromRows(tradeRows: RawRow[], positions: PositionMap): H
 
     holdings.push({
       security,
+      isin,
       assetClass: tipo ?? "Stock",
       currency: secRows[secRows.length - 1].currency || "EUR",
       shares,

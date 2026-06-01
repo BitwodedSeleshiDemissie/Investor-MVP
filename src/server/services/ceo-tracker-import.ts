@@ -73,6 +73,17 @@ function optionalEnvNumber(name: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function latestWorkbookSourceDate(workbookData: WorkbookData, fallbackDate: string): string {
+  const fallback = new Date(`${fallbackDate}T00:00:00`);
+  const dates = [
+    ...workbookData.tradeLog.map((row) => row.date),
+    ...workbookData.monthlyReturns.map((row) => row.monthEnd),
+  ].filter((date) => Number.isFinite(date.getTime()) && date <= fallback);
+
+  if (dates.length === 0) return fallbackDate;
+  return dateOnly(dates.reduce((a, b) => (a >= b ? a : b)));
+}
+
 function buildManualSeedRows(
   workbookData: WorkbookData,
   nonListedTotal: number,
@@ -209,6 +220,30 @@ async function latestCeoBaseline(): Promise<{ id: number; payload: PortfolioSnap
   return { id: Number(row.id), payload };
 }
 
+async function refreshExistingCeoBaseline(
+  snapshotId: number,
+  payload: PortfolioSnapshot,
+  workbookData: WorkbookData,
+  fileName: string
+): Promise<PortfolioSnapshot> {
+  const refreshed: PortfolioSnapshot = {
+    ...payload,
+    holdings: computeHoldings(workbookData),
+    dataFreshness: {
+      lastUploadAt: payload.dataFreshness?.lastUploadAt ?? payload.frozenAt ?? null,
+      transactionsThrough: latestWorkbookSourceDate(workbookData, payload.cutoffDate),
+      positionsAsOf: payload.dataFreshness?.positionsAsOf ?? payload.cutoffDate,
+      sourceFiles: [fileName],
+    },
+  };
+  const prisma = getPrisma();
+  await prisma.portfolio_snapshots.update({
+    where: { id: BigInt(snapshotId) },
+    data: { payload: refreshed as unknown as Prisma.InputJsonValue },
+  });
+  return refreshed;
+}
+
 export async function importCeoTrackerWorkbook({
   workbookData,
   fileName,
@@ -226,7 +261,10 @@ export async function importCeoTrackerWorkbook({
 }): Promise<CeoTrackerImportResult> {
   if (skipIfSeeded) {
     const existing = await latestCeoBaseline();
-    if (existing) return resultFromSnapshot(existing.id, existing.payload, true);
+    if (existing) {
+      const refreshed = await refreshExistingCeoBaseline(existing.id, existing.payload, workbookData, fileName);
+      return resultFromSnapshot(existing.id, refreshed, true);
+    }
   }
 
   if (workbookData.investorPerformance.length === 0) {
@@ -282,6 +320,12 @@ export async function importCeoTrackerWorkbook({
         0
     ),
     cutoffDate,
+    dataFreshness: {
+      lastUploadAt: frozenAt,
+      transactionsThrough: latestWorkbookSourceDate(workbookData, cutoffDate),
+      positionsAsOf: cutoffDate,
+      sourceFiles: [fileName],
+    },
     investorName: fundSettings.fundDisplayName,
     portfolioId: fundSettings.portfolioId,
     warnings: checkWarnings(workbookData),

@@ -3,6 +3,7 @@ export const dynamic = "force-dynamic";
 import {
   Activity,
   AlertTriangle,
+  CalendarClock,
   DollarSign,
   LayoutDashboard,
   PieChart,
@@ -65,6 +66,7 @@ export default async function DashboardPage() {
   const snap = await getPortfolioSnapshot(sessionInvestorName);
   const { kpis, irr, risk, allocation, composition, warnings } = snap;
   const performanceRows = snap.investorPerformance ?? [];
+  const transactionsThrough = snap.dataFreshness?.transactionsThrough ?? snap.cutoffDate;
 
   const investorPerformance =
     session?.role === "admin"
@@ -131,6 +133,13 @@ export default async function DashboardPage() {
             {snap.portfolioId}
             <span className="mx-1.5 text-border">/</span>
             As of <span className="text-foreground font-medium">{formatDate(snap.cutoffDate)}</span>
+          </p>
+          <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground/80">
+            <CalendarClock className="h-3.5 w-3.5 text-muted-foreground/60" />
+            <span>
+              Includes transactions through{" "}
+              <span className="font-medium text-foreground">{formatDate(transactionsThrough)}</span>
+            </span>
           </p>
         </div>
       </div>

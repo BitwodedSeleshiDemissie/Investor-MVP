@@ -8,6 +8,7 @@ import {
   type PositionPriceRow,
   type RawRow,
 } from "@/lib/directa-preprocess";
+import { resolveIsin } from "@/lib/isin";
 
 type DirectaBatchSummary = {
   id: number;
@@ -405,6 +406,7 @@ export async function readDirectaSourceDataAfterCutoff(
       date: dbDate(row.trade_date)!,
       settlement: dbDate(row.settlement_date),
       security: row.security_name,
+      isin: resolveIsin(row.security_name, row.reference),
       reference: row.reference,
       price: row.price,
       currency: row.currency,
@@ -418,6 +420,7 @@ export async function readDirectaSourceDataAfterCutoff(
       sourceFile: row.source_file,
       fileDate: dbDate(row.file_date),
       security: row.security_name,
+      isin: resolveIsin(row.security_name),
       quantity: row.quantity,
       price: row.price,
       marketValue: row.market_value,

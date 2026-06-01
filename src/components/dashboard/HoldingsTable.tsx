@@ -72,13 +72,15 @@ export function HoldingsTable({ holdings }: { holdings: Holding[] }) {
       </div>
 
       <div className="max-h-[520px] overflow-auto">
-        <table className="w-full min-w-[640px] text-sm">
+        <table className="w-full min-w-[760px] text-sm">
           <thead className="sticky top-0 z-10">
             <tr className="border-b border-border/60" style={{ background: "hsl(222 35% 10%)" }}>
-              {["Security", "Type", "Market Value", "Weight"].map((h) => (
+              {["Security", "Type", "Market Value", "Weight", "ISIN"].map((h) => (
                 <th
                   key={h}
-                  className="px-4 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest text-right first:text-left"
+                  className={`px-4 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest ${
+                    h === "Security" || h === "ISIN" ? "text-left" : "text-right"
+                  }`}
                 >
                   {h}
                 </th>
@@ -88,7 +90,7 @@ export function HoldingsTable({ holdings }: { holdings: Holding[] }) {
           <tbody>
             {filtered.map((h) => (
               <tr
-                key={`${h.security}-${h.assetClass}`}
+                key={`${h.security}-${h.isin ?? ""}-${h.assetClass}`}
                 className="border-b border-border/40 last:border-0 hover:bg-secondary/20 transition-colors group"
               >
                 <td className="px-4 py-3.5">
@@ -117,6 +119,10 @@ export function HoldingsTable({ holdings }: { holdings: Holding[] }) {
                 <td className="px-4 py-3.5 text-right font-numeric text-muted-foreground text-sm">
                   {(h.weight * 100).toFixed(1)}%
                 </td>
+
+                <td className="px-4 py-3.5 text-left">
+                  <span className="font-numeric text-xs text-muted-foreground">{h.isin || "-"}</span>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -128,6 +134,7 @@ export function HoldingsTable({ holdings }: { holdings: Holding[] }) {
               <td className="px-4 py-3 text-right font-numeric font-bold text-foreground">
                 {formatEur(filteredValue)}
               </td>
+              <td />
               <td />
             </tr>
           </tfoot>

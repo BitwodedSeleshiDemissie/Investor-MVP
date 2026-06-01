@@ -33,6 +33,19 @@ export function formatDate(dateStr: string): string {
   return d.toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
 }
 
+export function formatDateTime(dateStr?: string | null): string {
+  if (!dateStr) return "-";
+  const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return "-";
+  return d.toLocaleString("it-IT", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 export function pnlColor(value: number): string {
   if (value > 0) return "text-success";
   if (value < 0) return "text-destructive";

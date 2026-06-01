@@ -27,6 +27,7 @@ function Section({ title, icon: Icon, children }: { title: string; icon: LucideI
 export default async function ListedPage() {
   const snap = await getPortfolioSnapshot();
   const { holdings, cutoffDate } = snap;
+  const transactionsThrough = snap.dataFreshness?.transactionsThrough ?? cutoffDate;
 
   const listed = holdings.filter(
     (h) => h.shares > 0 && !["private", "non-listed", "unlisted", "alternatives"].some(
@@ -52,7 +53,7 @@ export default async function ListedPage() {
       <div className="pt-1">
         <h1 className="text-xl font-bold text-foreground tracking-tight">Listed / Market-Priced</h1>
         <p className="text-sm text-muted-foreground mt-0.5">
-          Market-priced assets as of {formatDate(cutoffDate)}
+          Market-priced assets as of {formatDate(cutoffDate)}. Includes transactions through {formatDate(transactionsThrough)}
         </p>
       </div>
 

@@ -7,12 +7,16 @@ export type Role = "investor" | "admin";
 type AuthUser = { email: string; password: string; role: Role; investorName?: string };
 
 const hardcodedDevUsers: AuthUser[] = [
-  { email: "admin@arietetest.com",   password: "admintest",   role: "admin" },
-  { email: "user@arietetest.com",    password: "usertest",    role: "investor", investorName: "Osy Harrison" },
-  { email: "osy@arietetest.com",     password: "osy123",      role: "investor", investorName: "Osy Harrison" },
-  { email: "bradley@arietetest.com", password: "bradley123",  role: "investor", investorName: "Bradley Jackson" },
-  { email: "grant@arietetest.com",   password: "grant123",    role: "investor", investorName: "Grant Kauffman" },
-  { email: "esra@arietetest.com",    password: "esra123",     role: "investor", investorName: "Esra Sertoglu" },
+  { email: "admin@arietecapital.com", password: "admintest", role: "admin" },
+  { email: "osy@arietecapital.com", password: "osy123", role: "investor", investorName: "Osy Harrison" },
+  {
+    email: "bradley@arietecapital.com",
+    password: "bradley123",
+    role: "investor",
+    investorName: "Bradley Jackson",
+  },
+  { email: "grant@arietecapital.com", password: "grant123", role: "investor", investorName: "Grant Kauffman" },
+  { email: "esra@arietecapital.com", password: "esra123", role: "investor", investorName: "Esra Sertoglu" },
 ];
 
 function getUsers(): AuthUser[] {

@@ -6,10 +6,10 @@ import { Client } from "pg";
 type Env = Record<string, string>;
 
 const env = loadLocalEnv();
-const adminEmail = process.env.E2E_ADMIN_EMAIL ?? "admin@arietetest.com";
+const adminEmail = process.env.E2E_ADMIN_EMAIL ?? "admin@arietecapital.com";
 const adminPassword = process.env.E2E_ADMIN_PASSWORD ?? "admintest";
-const investorEmail = process.env.E2E_INVESTOR_EMAIL ?? "user@arietetest.com";
-const investorPassword = process.env.E2E_INVESTOR_PASSWORD ?? "usertest";
+const investorEmail = process.env.E2E_INVESTOR_EMAIL ?? "osy@arietecapital.com";
+const investorPassword = process.env.E2E_INVESTOR_PASSWORD ?? "osy123";
 const databaseUrl = process.env.DATABASE_URL ?? env.DATABASE_URL;
 
 const stamp = Date.now().toString();

@@ -1,5 +1,6 @@
 import type { WorkbookData } from "./excel-loader";
 import { INCOME_TYPES } from "./excel-loader";
+import { resolveIsin } from "./isin";
 import type {
   KPIs,
   NavPoint,
@@ -424,6 +425,7 @@ export function computeTargets(data: WorkbookData, settings: Settings): TargetVs
 export function computeHoldings(data: WorkbookData): Holding[] {
   return data.holdings.map((h) => ({
     security: h.security,
+    isin: h.isin || resolveIsin(h.security),
     assetClass: normalizeAssetClass(h.assetClass),
     currency: h.currency,
     shares: h.shares,

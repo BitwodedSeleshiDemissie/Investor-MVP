@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dbEnabled, getPrisma } from "@/db/prisma";
-import { buildWorkbookDataFromParsedRows, formatDateOnly, parseCsvFile, parsePositionCsvFile } from "@/lib/directa-preprocess";
+import {
+  buildWorkbookDataFromParsedRows,
+  formatDateOnly,
+  parseCsvFile,
+  parsePositionCsvFile,
+  type RawRow,
+} from "@/lib/directa-preprocess";
 import {
   buildDeterministicChecks,
   type ReviewCheck,
@@ -79,6 +85,16 @@ function previousDirectaCashForComparison(snapshot: PortfolioSnapshot | null): n
   if (!snapshot) return null;
   if (snapshot.overlaySources?.source === "CEO tracker workbook") return null;
   return snapshot.directaCash ?? null;
+}
+
+function latestTransactionDate(rows: RawRow[], cutoffDate: string): string {
+  const cutoff = new Date(`${cutoffDate}T23:59:59`);
+  const considered = rows
+    .filter((row) => row.type !== "Balance" && row.date <= cutoff)
+    .map((row) => row.date)
+    .filter((date) => Number.isFinite(date.getTime()));
+  if (considered.length === 0) return cutoffDate;
+  return formatDateOnly(considered.reduce((a, b) => (a >= b ? a : b)));
 }
 
 function buildReviewSummary(args: {
@@ -390,6 +406,12 @@ export async function POST(req: NextRequest) {
   }
 
   const frozenAt = new Date().toISOString();
+  payload.dataFreshness = {
+    lastUploadAt: frozenAt,
+    transactionsThrough: latestTransactionDate(sourceData.transactions, payload.cutoffDate),
+    positionsAsOf: payload.cutoffDate,
+    sourceFiles: newFilenames,
+  };
   payload.overlaysFrozen = true;
   payload.frozenAt = frozenAt;
   payload.overlaySources = {
