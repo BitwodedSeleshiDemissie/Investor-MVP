@@ -1,15 +1,21 @@
 import { Users, ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { getInvestorProfiles } from "@/server/queries/admin";
+import { getPortfolioSnapshot } from "@/server/queries/portfolio";
 import { dbEnabled } from "@/db/prisma";
 import { InvestorProfilesForm } from "@/components/admin/InvestorProfilesForm";
 import { formatEur } from "@/lib/utils";
 
 export default async function InvestorsPage() {
-  const profiles = await getInvestorProfiles();
+  const [profiles, snapshot] = await Promise.all([
+    getInvestorProfiles(),
+    getPortfolioSnapshot(),
+  ]);
   const activeProfiles = profiles.filter((p) => p.active);
   const totalCapital = activeProfiles.reduce((s, p) => s + p.capitalEur, 0);
   const totalUnits = activeProfiles.reduce((s, p) => s + p.units, 0);
+  const valuedUnits = snapshot.investorPerformance.reduce((s, p) => s + p.units, 0);
+  const currentNavUnit = valuedUnits > 0 ? snapshot.kpis.totalPortfolioValue / valuedUnits : 1;
 
   return (
     <div className="space-y-6 pb-10 animate-fade-in">
@@ -68,7 +74,7 @@ export default async function InvestorsPage() {
           <p className="text-xs text-muted-foreground/60 mt-1">Add DATABASE_URL in .env.</p>
         </div>
       ) : (
-        <InvestorProfilesForm profiles={profiles} />
+        <InvestorProfilesForm profiles={profiles} currentNavUnit={currentNavUnit} />
       )}
     </div>
   );

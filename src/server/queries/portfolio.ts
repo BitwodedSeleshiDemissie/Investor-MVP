@@ -1,5 +1,6 @@
 import { dbEnabled, getPrisma } from "@/db/prisma";
 import { cleanDisplayName } from "@/lib/auth";
+import { calculateCashOutsideBrokerage } from "@/lib/cash";
 import { recomputeRiskFromTimeseries } from "@/lib/calculations";
 import { resolveIsin } from "@/lib/isin";
 import {
@@ -22,6 +23,15 @@ type ManualOverlayRow = {
   display_name: string;
   item_type: string;
   value: string;
+};
+
+type InvestorProfileCalcRow = {
+  name: string;
+  investor_type: string;
+  capital_eur: number;
+  units: number;
+  subscription_date: Date | string;
+  nav_unit_at_sub: number;
 };
 
 function dateOnly(value: string | Date): string {
@@ -48,10 +58,14 @@ function splitSourceFiles(value: string | null | undefined): string[] {
     .filter(Boolean);
 }
 
-function csvSourceFiles(snapshot: PortfolioSnapshot, row: SnapshotDbRow): string[] {
-  const files = snapshot.dataFreshness?.sourceFiles?.length
+function snapshotSourceFiles(snapshot: PortfolioSnapshot, row: SnapshotDbRow): string[] {
+  return snapshot.dataFreshness?.sourceFiles?.length
     ? snapshot.dataFreshness.sourceFiles
     : splitSourceFiles(row.source_file);
+}
+
+function csvSourceFiles(snapshot: PortfolioSnapshot, row: SnapshotDbRow): string[] {
+  const files = snapshotSourceFiles(snapshot, row);
   return files.filter((file) => file.toLowerCase().endsWith(".csv"));
 }
 
@@ -123,8 +137,8 @@ function emptyPortfolioSnapshot(
       positionsAsOf: today,
       sourceFiles: [],
     },
-    overlaysFrozen: true,
-    frozenAt: today,
+    sourceRecordReady: true,
+    sourceRecordedAt: today,
     overlaySources: {
       capitalCommitted: 0,
       nonListedValue: 0,
@@ -161,22 +175,40 @@ async function readLatestSnapshot(): Promise<SnapshotDbRow | null> {
 async function readTransactionsThrough(snapshot: PortfolioSnapshot, row: SnapshotDbRow): Promise<string | null> {
   const prisma = getPrisma();
   const cutoffDate = snapshot.cutoffDate || dateOnly(row.as_of_date);
+  const sourceFilesForSnapshot = snapshotSourceFiles(snapshot, row);
   const sourceFiles = csvSourceFiles(snapshot, row);
 
   if (sourceFiles.length > 0) {
     const rows = await prisma.$queryRaw<Array<{ transaction_date: Date | null }>>`
-      SELECT MAX(trade_date) AS transaction_date
-      FROM directa_transactions
-      WHERE source_file = ANY(${sourceFiles}::text[])
+      SELECT dt.trade_date AS transaction_date
+      FROM directa_transactions dt
+      JOIN directa_upload_batches b ON b.id = dt.upload_batch_id
+      WHERE dt.source_file = ANY(${sourceFiles}::text[])
+        AND dt.transaction_type <> 'Balance'
+      ORDER BY
+        COALESCE(b.month_end, dt.file_date, dt.trade_date) DESC,
+        b.uploaded_at DESC,
+        b.id DESC,
+        dt.row_number DESC
+      LIMIT 1
     `;
     if (rows[0]?.transaction_date) return dateOnly(rows[0].transaction_date);
   }
+  if (sourceFilesForSnapshot.length > 0) return null;
 
   const cutoff = new Date(`${cutoffDate}T00:00:00`);
   const rows = await prisma.$queryRaw<Array<{ transaction_date: Date | null }>>`
-    SELECT MAX(trade_date) AS transaction_date
-    FROM directa_transactions
-    WHERE trade_date <= ${cutoff}
+    SELECT dt.trade_date AS transaction_date
+    FROM directa_transactions dt
+    JOIN directa_upload_batches b ON b.id = dt.upload_batch_id
+    WHERE dt.trade_date <= ${cutoff}
+      AND dt.transaction_type <> 'Balance'
+    ORDER BY
+      COALESCE(b.month_end, dt.file_date, dt.trade_date) DESC,
+      b.uploaded_at DESC,
+      b.id DESC,
+      dt.row_number DESC
+    LIMIT 1
   `;
   return rows[0]?.transaction_date ? dateOnly(rows[0].transaction_date) : null;
 }
@@ -184,10 +216,11 @@ async function readTransactionsThrough(snapshot: PortfolioSnapshot, row: Snapsho
 async function addReadMetadata(snapshot: PortfolioSnapshot, row: SnapshotDbRow): Promise<void> {
   const cutoffDate = snapshot.cutoffDate || dateOnly(row.as_of_date);
   const transactionsThrough = await readTransactionsThrough(snapshot, row);
+  const storedTransactionsThrough = snapshot.dataFreshness?.transactionsThrough ?? null;
   snapshot.cutoffDate = cutoffDate;
   snapshot.dataFreshness = {
     lastUploadAt: snapshot.dataFreshness?.lastUploadAt ?? dateTime(row.created_at),
-    transactionsThrough: transactionsThrough ?? snapshot.dataFreshness?.transactionsThrough ?? cutoffDate,
+    transactionsThrough: transactionsThrough ?? storedTransactionsThrough ?? cutoffDate,
     positionsAsOf: snapshot.dataFreshness?.positionsAsOf ?? cutoffDate,
     sourceFiles: snapshot.dataFreshness?.sourceFiles?.length
       ? snapshot.dataFreshness.sourceFiles
@@ -199,9 +232,15 @@ async function addReadMetadata(snapshot: PortfolioSnapshot, row: SnapshotDbRow):
   }));
 }
 
-async function readControl(): Promise<{ portfolio_id: string; investor_name: string; capital_committed: string } | null> {
+function snapshotCutoffDate(snapshot: PortfolioSnapshot): Date {
+  return new Date(`${snapshot.cutoffDate}T00:00:00`);
+}
+
+async function readControl(cutoffDate: string): Promise<{ portfolio_id: string; investor_name: string; capital_committed: string } | null> {
   const prisma = getPrisma();
+  const cutoff = new Date(`${cutoffDate}T00:00:00`);
   const row = await prisma.admin_controls.findFirst({
+    where: { as_of_date: { lte: cutoff } },
     select: { portfolio_id: true, investor_name: true, capital_committed: true },
     orderBy: [{ as_of_date: "desc" }, { created_at: "desc" }],
   });
@@ -209,14 +248,16 @@ async function readControl(): Promise<{ portfolio_id: string; investor_name: str
   return { ...row, capital_committed: String(row.capital_committed) };
 }
 
-async function readManualOverlays(): Promise<ManualOverlayRow[]> {
+async function readManualOverlays(cutoffDate: string): Promise<ManualOverlayRow[]> {
   const prisma = getPrisma();
+  const cutoff = new Date(`${cutoffDate}T00:00:00`);
   return prisma.$queryRaw<ManualOverlayRow[]>`
     WITH picked AS (
       SELECT DISTINCT ON (mv.item_key)
         mv.item_key,
         mv.value
       FROM admin_manual_values mv
+      WHERE mv.as_of_date <= ${cutoff}
       ORDER BY mv.item_key, mv.as_of_date DESC, mv.created_at DESC
     )
     SELECT p.item_key, d.display_name, d.item_type, p.value::text AS value
@@ -255,24 +296,161 @@ function applyCurrentFundSettings(snapshot: PortfolioSnapshot, settings: FundSet
   );
 }
 
+function roughlyEqual(a: number, b: number): boolean {
+  return Math.abs(a - b) < 0.01;
+}
+
+function sourceRecordOwnsInvestorValuation(
+  snapshot: PortfolioSnapshot,
+  profiles: InvestorProfileCalcRow[],
+  manualRows: ManualOverlayRow[]
+): boolean {
+  const investorPerformance = snapshot.investorPerformance ?? [];
+  if (investorPerformance.length === 0) return false;
+  if (profiles.length === 0) return true;
+
+  const profileByName = new Map(
+    profiles.map((profile) => [normalizeName(profile.name), profile])
+  );
+  if (profileByName.size !== investorPerformance.length) return false;
+
+  const profilesMatch = investorPerformance.every((investor) => {
+    const profile = profileByName.get(normalizeName(investor.name));
+    if (!profile) return false;
+    return (
+      roughlyEqual(Number(profile.capital_eur), investor.capitalEur) &&
+      roughlyEqual(Number(profile.units), investor.units) &&
+      dateOnly(profile.subscription_date) === investor.subscriptionDate
+    );
+  });
+  if (!profilesMatch) return false;
+
+  const sourceItems = (snapshot.overlaySources?.manualItems ?? [])
+    .filter((item) => item.item_type.toLowerCase() !== "cash")
+    .map((item) => [item.item_key, Number(item.value)] as const);
+  const liveItems = manualRows
+    .filter((item) => item.item_type.toLowerCase() !== "cash")
+    .map((item) => [item.item_key, Number(item.value)] as const);
+  if (sourceItems.length === 0 || liveItems.length === 0) return true;
+  if (sourceItems.length !== liveItems.length) return false;
+
+  const liveByKey = new Map(liveItems);
+  return sourceItems.every(([key, value]) => {
+    const liveValue = liveByKey.get(key);
+    return liveValue !== undefined && roughlyEqual(liveValue, value);
+  });
+}
+
+function splitProfilesByCutoff(
+  profiles: InvestorProfileCalcRow[],
+  cutoff: Date
+): { cutoffProfiles: InvestorProfileCalcRow[]; postCutoffProfiles: InvestorProfileCalcRow[] } {
+  const cutoffDay = dateOnly(cutoff);
+  const cutoffProfiles: InvestorProfileCalcRow[] = [];
+  const postCutoffProfiles: InvestorProfileCalcRow[] = [];
+
+  for (const profile of profiles) {
+    if (dateOnly(profile.subscription_date) <= cutoffDay) {
+      cutoffProfiles.push(profile);
+    } else {
+      postCutoffProfiles.push(profile);
+    }
+  }
+
+  return { cutoffProfiles, postCutoffProfiles };
+}
+
+function appendPostCutoffInvestorProfiles(
+  snapshot: PortfolioSnapshot,
+  profiles: InvestorProfileCalcRow[]
+): void {
+  if (profiles.length === 0) return;
+
+  const sourceInvestors = snapshot.investorPerformance ?? [];
+  const sourceUnits = sourceInvestors.reduce((sum, p) => sum + p.units, 0);
+  const sourceInvestorValue = sourceInvestors.reduce((sum, p) => sum + p.currentValueEur, 0);
+  const sourceNavUnit = sourceUnits > 0 ? sourceInvestorValue / sourceUnits : 0;
+  const valuationDate = new Date();
+
+  snapshot.investorPerformance = [
+    ...sourceInvestors,
+    ...profiles.map((p): InvestorPerf => {
+      const capitalEur = Number(p.capital_eur);
+      const units = Number(p.units);
+      const subscriptionDate = dateOnly(p.subscription_date);
+      const sub = new Date(subscriptionDate);
+      const yearsElapsed = Math.max(
+        0,
+        (valuationDate.getTime() - sub.getTime()) / (365.25 * 24 * 3600 * 1000)
+      );
+      const currentValueEur = sourceNavUnit > 0 ? units * sourceNavUnit : capitalEur;
+      const moic = capitalEur > 0 ? currentValueEur / capitalEur : 0;
+      const irrAnnualized = yearsElapsed > 0 && moic > 0 ? Math.pow(moic, 1 / yearsElapsed) - 1 : 0;
+
+      return {
+        name: p.name,
+        type: p.investor_type,
+        subscriptionDate,
+        capitalEur,
+        units,
+        yearsElapsed,
+        navUnitAtSub: Number(p.nav_unit_at_sub),
+        currentValueEur,
+        moic,
+        irrAnnualized,
+      };
+    }),
+  ];
+}
+
 async function overlayAdminValues(snapshot: PortfolioSnapshot): Promise<PortfolioSnapshot> {
   const result = cloneSnapshot(snapshot);
-  const [control, manualRows] = await Promise.all([readControl(), readManualOverlays()]);
+  const prisma = getPrisma();
+  const cutoff = snapshotCutoffDate(result);
+  const [control, manualRows, profileRows] = await Promise.all([
+    readControl(result.cutoffDate),
+    readManualOverlays(result.cutoffDate),
+    prisma.investor_profiles.findMany({
+      where: { active: true },
+      orderBy: [{ subscription_date: "asc" }, { name: "asc" }],
+      select: { name: true, investor_type: true, capital_eur: true, units: true, subscription_date: true, nav_unit_at_sub: true },
+    }),
+  ]);
+  const { cutoffProfiles, postCutoffProfiles } = splitProfilesByCutoff(profileRows, cutoff);
+  const keepSourceInvestorValuation = sourceRecordOwnsInvestorValuation(result, cutoffProfiles, manualRows);
+  const postCutoffCapital = postCutoffProfiles.reduce((sum, profile) => sum + Number(profile.capital_eur), 0);
 
   if (control) {
     result.portfolioId = cleanDisplayName(control.portfolio_id) ?? result.portfolioId;
     result.investorName = cleanDisplayName(control.investor_name) ?? result.investorName;
-    result.kpis.capitalCommitted = Number(control.capital_committed);
   }
+  const profileCapitalCommitted = profileRows.reduce((sum, profile) => sum + Number(profile.capital_eur), 0);
+  const hasLiveCapital = profileCapitalCommitted > 0 || Boolean(control);
+  result.kpis.capitalCommitted = keepSourceInvestorValuation
+    ? result.kpis.capitalCommitted + postCutoffCapital
+    : profileCapitalCommitted > 0
+      ? profileCapitalCommitted
+      : control ? Number(control.capital_committed) : result.kpis.capitalCommitted;
 
   const nonListedRows = manualRows.filter((row) => row.item_type.toLowerCase() !== "cash");
-  const cashRows = manualRows.filter((row) => row.item_type.toLowerCase() === "cash");
   const nonListed = nonListedRows.length > 0
     ? nonListedRows.reduce((sum, row) => sum + Number(row.value), 0)
     : result.composition.nonListed;
-  const externalCash = cashRows.reduce((sum, row) => sum + Number(row.value), 0);
   const statementCash = result.directaCash || 0;
-  const cash = cashRows.length > 0 ? statementCash + externalCash : result.composition.cash;
+  const sourceRecordCashOutsideBrokerage = Number(
+    result.overlaySources?.externalCash ?? Math.max(0, Number(result.composition?.cash ?? 0) - statementCash)
+  );
+  const cashOutsideBrokerage = keepSourceInvestorValuation
+    ? sourceRecordCashOutsideBrokerage + postCutoffCapital
+    : hasLiveCapital
+    ? calculateCashOutsideBrokerage({
+        capitalCommitted: result.kpis.capitalCommitted,
+        listedValue: result.composition.listed,
+        brokerageCash: statementCash,
+        nonListedValue: nonListed,
+      })
+    : sourceRecordCashOutsideBrokerage;
+  const cash = statementCash + cashOutsideBrokerage;
 
   const composition: PortfolioComposition = {
     listed: result.composition.listed,
@@ -282,6 +460,11 @@ async function overlayAdminValues(snapshot: PortfolioSnapshot): Promise<Portfoli
   };
 
   applyComposition(result, composition);
+  if (keepSourceInvestorValuation) {
+    appendPostCutoffInvestorProfiles(result, postCutoffProfiles);
+  } else {
+    applyInvestorProfiles(result, profileRows);
+  }
   let hasNonListedAllocation = false;
   result.allocation = result.allocation.map((slice) => {
     const assetClass = slice.assetClass.toLowerCase();
@@ -322,14 +505,7 @@ async function overlayAdminValues(snapshot: PortfolioSnapshot): Promise<Portfoli
   return result;
 }
 
-async function populateInvestorPerformanceFromProfiles(snapshot: PortfolioSnapshot): Promise<void> {
-  const prisma = getPrisma();
-  const profiles = await prisma.investor_profiles.findMany({
-    where: { active: true },
-    orderBy: [{ subscription_date: "asc" }, { name: "asc" }],
-    select: { name: true, investor_type: true, capital_eur: true, units: true, subscription_date: true, nav_unit_at_sub: true },
-  });
-
+function applyInvestorProfiles(snapshot: PortfolioSnapshot, profiles: InvestorProfileCalcRow[]): void {
   if (profiles.length === 0) {
     snapshot.investorPerformance = snapshot.investorPerformance ?? [];
     return;
@@ -345,7 +521,7 @@ async function populateInvestorPerformanceFromProfiles(snapshot: PortfolioSnapsh
     const navUnitAtSub = p.nav_unit_at_sub;
     const subscriptionDate = dateOnly(p.subscription_date);
     const sub = new Date(subscriptionDate);
-    const yearsElapsed = (cutoff.getTime() - sub.getTime()) / (365.25 * 24 * 3600 * 1000);
+    const yearsElapsed = Math.max(0, (cutoff.getTime() - sub.getTime()) / (365.25 * 24 * 3600 * 1000));
     const currentValueEur = units * navUnit;
     const moic = capitalEur > 0 ? currentValueEur / capitalEur : 0;
     const irrAnnualized = yearsElapsed > 0 && moic > 0 ? Math.pow(moic, 1 / yearsElapsed) - 1 : 0;
@@ -445,26 +621,10 @@ export async function getPortfolioSnapshot(investorName?: string): Promise<Portf
   const snapshot = row.payload;
   await addReadMetadata(snapshot, row);
 
-  let result: PortfolioSnapshot;
-
-  if (snapshot.overlaysFrozen) {
-    result = cloneSnapshot(snapshot);
-    result.investorName = cleanDisplayName(result.investorName) ?? "Investor";
-    result.portfolioId  = cleanDisplayName(result.portfolioId)  ?? "";
-    result.investorPerformance = result.investorPerformance ?? [];
-  } else {
-    result = cloneSnapshot(snapshot);
-    result.investorName = cleanDisplayName(result.investorName) ?? "Investor";
-    result.portfolioId  = cleanDisplayName(result.portfolioId)  ?? "";
-    if (!result.investorPerformance || result.investorPerformance.length === 0) {
-      await populateInvestorPerformanceFromProfiles(result);
-    }
-    result.investorPerformance = result.investorPerformance ?? [];
-    result.warnings = [
-      "LEGACY_SNAPSHOT: This snapshot predates the immutable overlay system. Admin: run /api/admin/freeze-legacy-snapshots to lock in values permanently.",
-      ...(result.warnings ?? []),
-    ];
-  }
+  const result = await overlayAdminValues(snapshot);
+  result.investorName = cleanDisplayName(result.investorName) ?? "Investor";
+  result.portfolioId  = cleanDisplayName(result.portfolioId)  ?? "";
+  result.investorPerformance = result.investorPerformance ?? [];
 
   if (Math.abs(result.risk.volatilityAnnualized) > 5.0 || result.risk.maxDrawdown < -0.5) {
     result.risk = recomputeRiskFromTimeseries(

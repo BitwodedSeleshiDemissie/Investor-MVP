@@ -12,7 +12,6 @@ import {
   computeTimeseries,
 } from "../../lib/calculations";
 import { calculationSettings, getFundSettings } from "../fund-settings";
-import { buildWorkbookCashFormula } from "../cash-formula";
 import type { WorkbookData } from "../../lib/excel-loader";
 import type { InvestorPerf, PortfolioSnapshot } from "../../types/portfolio";
 import type { Prisma } from "../../generated/prisma/client";
@@ -33,7 +32,7 @@ export type CeoTrackerImportResult = {
   snapshotId: number;
   cutoffDate: string;
   publicationStatus: "published";
-  overlaysFrozen: true;
+  sourceRecordReady: true;
   investorCount: number;
   portfolioValue: number;
   fundIrr: number | null;
@@ -128,11 +127,11 @@ function buildManualSeedRows(
     if (externalCashDifference > 0) {
       rows.push({
         itemKey: "TRACKER_EXTERNAL_CASH_DIFFERENCE",
-        displayName: "External Cash Difference",
+        displayName: "Cash Outside Brokerage",
         itemType: "Cash",
-        subcategory: "Outside Directa Cash",
+        subcategory: "Cash Outside Brokerage",
         value: externalCashDifference,
-        notes: "Seeded as CEO tracker cash less baseline Directa statement cash",
+        notes: "Seeded as CEO tracker cash less baseline brokerage account cash",
         sortOrder: 900,
       });
     }
@@ -187,7 +186,7 @@ function resultFromSnapshot(
     snapshotId,
     cutoffDate: payload.cutoffDate,
     publicationStatus: "published",
-    overlaysFrozen: true,
+    sourceRecordReady: true,
     investorCount: payload.investorPerformance.length,
     portfolioValue: payload.kpis.totalPortfolioValue,
     fundIrr: payload.irr.fundIrr,
@@ -224,16 +223,71 @@ async function refreshExistingCeoBaseline(
   snapshotId: number,
   payload: PortfolioSnapshot,
   workbookData: WorkbookData,
-  fileName: string
+  fileName: string,
+  baselineDirectaCash: number | null
 ): Promise<PortfolioSnapshot> {
+  const fundSettings = await getFundSettings();
+  const settings = calculationSettings(fundSettings);
+  const kpis = computeKPIs(workbookData, settings);
+  const composition = computeComposition(workbookData);
+  const investorPerformance: InvestorPerf[] = workbookData.investorPerformance.map((p) => ({
+    name: p.name,
+    type: p.type,
+    subscriptionDate: dateOnly(p.subscriptionDate),
+    capitalEur: p.capitalEur,
+    units: p.units,
+    yearsElapsed: p.yearsElapsed,
+    navUnitAtSub: p.navUnitAtSub,
+    currentValueEur: p.currentValueEur,
+    moic: p.moic,
+    irrAnnualized: p.irrAnnualized,
+  }));
+  const brokerageCash = baselineDirectaCash ?? Number(
+    payload.directaCash ??
+      workbookData.portfolioMetrics["Statement Cash"] ??
+      workbookData.portfolioMetrics["Directa Cash"] ??
+      workbookData.portfolioMetrics["Total Cash"] ??
+      workbookData.portfolioMetrics["Cash"] ??
+      0
+  );
   const refreshed: PortfolioSnapshot = {
     ...payload,
+    kpis,
+    timeseries: computeTimeseries(workbookData),
+    allocation: computeAllocation(workbookData),
+    irr: computeIRR(workbookData),
+    risk: computeRisk(workbookData, settings),
+    distributions: computeDistributions(workbookData),
+    targets: computeTargets(workbookData, settings),
     holdings: computeHoldings(workbookData),
+    composition,
+    pnl: {
+      unrealized: Number(workbookData.portfolioMetrics["Unrealized P&L"] ?? 0),
+      realized: Number(workbookData.portfolioMetrics["Realized P&L"] ?? 0),
+      netTotal: Number(workbookData.portfolioMetrics["Net Total P&L"] ?? 0),
+    },
+    directaCash: brokerageCash,
     dataFreshness: {
-      lastUploadAt: payload.dataFreshness?.lastUploadAt ?? payload.frozenAt ?? null,
+      lastUploadAt: payload.dataFreshness?.lastUploadAt ?? payload.sourceRecordedAt ?? payload.frozenAt ?? null,
       transactionsThrough: latestWorkbookSourceDate(workbookData, payload.cutoffDate),
       positionsAsOf: payload.dataFreshness?.positionsAsOf ?? payload.cutoffDate,
       sourceFiles: [fileName],
+    },
+    investorName: fundSettings.fundDisplayName,
+    portfolioId: fundSettings.portfolioId,
+    warnings: checkWarnings(workbookData),
+    investorPerformance,
+    sourceRecordReady: true,
+    sourceRecordedAt: payload.sourceRecordedAt ?? payload.frozenAt,
+    overlaySources: {
+      ...payload.overlaySources,
+      capitalCommitted: kpis.capitalCommitted,
+      nonListedValue: composition.nonListed,
+      externalCash: Math.max(0, composition.cash - brokerageCash),
+      overlayItemCount: payload.overlaySources?.overlayItemCount ?? 0,
+      investorProfileCount: investorPerformance.length,
+      manualItems: payload.overlaySources?.manualItems ?? [],
+      source: "CEO tracker workbook",
     },
   };
   const prisma = getPrisma();
@@ -262,7 +316,7 @@ export async function importCeoTrackerWorkbook({
   if (skipIfSeeded) {
     const existing = await latestCeoBaseline();
     if (existing) {
-      const refreshed = await refreshExistingCeoBaseline(existing.id, existing.payload, workbookData, fileName);
+      const refreshed = await refreshExistingCeoBaseline(existing.id, existing.payload, workbookData, fileName, baselineDirectaCash);
       return resultFromSnapshot(existing.id, refreshed, true);
     }
   }
@@ -279,10 +333,9 @@ export async function importCeoTrackerWorkbook({
   const settings = calculationSettings(fundSettings);
   const kpis = computeKPIs(workbookData, settings);
   const composition = computeComposition(workbookData);
-  const frozenAt = new Date().toISOString();
+  const sourceRecordedAt = new Date().toISOString();
   const manualSeedRows = buildManualSeedRows(workbookData, composition.nonListed, baselineDirectaCash);
   const externalCash = manualSum(manualSeedRows, "Cash");
-  const cashFormula = buildWorkbookCashFormula(workbookData.portfolioMetrics, cutoffDate);
 
   const investorPerformance: InvestorPerf[] = workbookData.investorPerformance.map((p) => ({
     name: p.name,
@@ -321,7 +374,7 @@ export async function importCeoTrackerWorkbook({
     ),
     cutoffDate,
     dataFreshness: {
-      lastUploadAt: frozenAt,
+      lastUploadAt: sourceRecordedAt,
       transactionsThrough: latestWorkbookSourceDate(workbookData, cutoffDate),
       positionsAsOf: cutoffDate,
       sourceFiles: [fileName],
@@ -330,15 +383,14 @@ export async function importCeoTrackerWorkbook({
     portfolioId: fundSettings.portfolioId,
     warnings: checkWarnings(workbookData),
     investorPerformance,
-    overlaysFrozen: true,
-    frozenAt,
+    sourceRecordReady: true,
+    sourceRecordedAt,
     overlaySources: {
       capitalCommitted: kpis.capitalCommitted,
       nonListedValue: composition.nonListed,
       externalCash,
       overlayItemCount: manualSeedRows.length,
       investorProfileCount: investorPerformance.length,
-      cashFormula: cashFormula ?? undefined,
       manualItems: manualSeedRows.map((row) => ({
         item_key: row.itemKey,
         item_type: row.itemType,
@@ -505,7 +557,6 @@ export async function importCeoTrackerWorkbook({
         published_at: new Date(),
         approved_by: approvedBy,
         approval_note: approvalNote,
-        overlays_frozen: true,
       },
       select: { id: true },
     });

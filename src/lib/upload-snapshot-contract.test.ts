@@ -98,13 +98,26 @@ function payload(): PortfolioSnapshot {
         irrAnnualized: 0,
       },
     ],
-    overlaysFrozen: true,
-    frozenAt: "2026-04-30T00:00:00Z",
+    sourceRecordReady: true,
+    sourceRecordedAt: "2026-04-30T00:00:00Z",
+    overlaySources: {
+      capitalCommitted: 1_000,
+      nonListedValue: 0,
+      externalCash: 0,
+      overlayItemCount: 0,
+      investorProfileCount: 1,
+      brokerageCashSource: {
+        type: "directa_pdf",
+        fileName: "SituazionePatrimoniale_B6166_30042026.pdf",
+        statementDate: "2026-04-30",
+      },
+      manualItems: [],
+    },
   };
 }
 
 describe("Directa upload contract", () => {
-  it("allows the CEO-style Estratto Conto statement without a positions file", () => {
+  it("allows monthly upload when CSV history is paired with the Directa PDF snapshot", () => {
     const checks = buildDeterministicChecks({
       uploaded: [
         {
@@ -130,6 +143,45 @@ describe("Directa upload contract", () => {
     });
 
     expect(checks.some((check) => check.severity === "blocker")).toBe(false);
-    expect(checks.map((check) => check.title)).toContain("CEO tracker valuation mode");
+    expect(checks.map((check) => check.title)).toContain("Directa PDF snapshot applied");
+  });
+
+  it("blocks CSV-only monthly uploads because current holdings and cash must come from the PDF", () => {
+    const csvOnlyPayload = payload();
+    csvOnlyPayload.overlaySources = {
+      capitalCommitted: 1_000,
+      nonListedValue: 0,
+      externalCash: 0,
+      overlayItemCount: 0,
+      investorProfileCount: 1,
+      manualItems: [],
+    };
+
+    const checks = buildDeterministicChecks({
+      uploaded: [
+        {
+          name: "Estratto Conto 2026-04-30.csv",
+          content: "",
+          statementRows: 12,
+          positionRows: 0,
+          hasLendingOrCollateralRows: false,
+        },
+      ],
+      used: [
+        {
+          name: "Estratto Conto 2026-04-30.csv",
+          content: "",
+          statementRows: 12,
+          positionRows: 0,
+          hasLendingOrCollateralRows: false,
+        },
+      ],
+      payload: csvOnlyPayload,
+      previous: null,
+      externalCash: 0,
+    });
+
+    expect(checks.some((check) => check.severity === "blocker")).toBe(true);
+    expect(checks.map((check) => check.title)).toContain("Missing Directa PDF snapshot");
   });
 });

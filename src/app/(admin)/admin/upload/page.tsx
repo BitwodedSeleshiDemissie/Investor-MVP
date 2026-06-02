@@ -24,15 +24,16 @@ export default function UploadDataPage() {
       >
         <p className="font-semibold text-foreground text-sm mb-2">Source order</p>
         <p>- Upload the CEO tracker once to create the official approved baseline.</p>
-        <p>- Upload Directa monthly CSVs for listed holdings, listed market value, statement cash, income, trades, and risk series.</p>
-        <p>- Confirm manual non-Directa values during the Directa upload for assets and cash Directa cannot know.</p>
+        <p>- Upload Directa monthly CSVs for transactions, income, commissions, and audit history.</p>
+        <p>- Upload the Directa PDF snapshot so listed holdings, ISINs, market value, and brokerage cash come from the official statement.</p>
+        <p>- Confirm manual non-listed values during the Directa upload. Cash outside brokerage is calculated automatically.</p>
       </div>
 
       <section className="space-y-3">
         <div>
           <h2 className="text-sm font-semibold text-foreground">Directa Monthly CSVs</h2>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Builds the latest portfolio snapshot from the full stored CSV history.
+            Combines CSV transaction history with the Directa PDF account snapshot.
           </p>
         </div>
         <DirectaUpload />

@@ -1,13 +1,13 @@
 /**
  * CEO tracker seed + architecture contract tests.
  *
- * 1. CEO workbook seed preserves all workbook numbers in frozen payload.
+ * 1. CEO workbook seed preserves all workbook numbers in source record payload.
  * 2. CEO seed upserts investor profiles from 12_Perf_Investitori into investor_profiles table.
- * 3. CEO seed snapshot is published + frozen with overlaySources.source = "CEO tracker workbook".
+ * 3. CEO seed snapshot is published + source-record with overlaySources.source = "CEO tracker workbook".
  * 4. CEO seed returns 422 when 12_Perf_Investitori has no rows.
- * 5. investorPerformance in frozen payload exactly matches workbook sheet rows.
+ * 5. investorPerformance in source record payload exactly matches workbook sheet rows.
  * 6. Publish route rejects draft with "No investor profiles configured" blocker.
- * 7. Frozen CEO seed payload bypasses investor_profiles live reads.
+ * 7. source-record CEO seed payload bypasses investor_profiles live reads.
  * 8. Official .xlsx CEO seed snapshots are eligible for dashboard reads.
  * 9. CEO seed creates monthly-upload defaults for controls and non-Directa items.
  */
@@ -173,7 +173,7 @@ function makeWorkbookData() {
   };
 }
 
-function makeFrozenPayload(overrides: Partial<PortfolioSnapshot> = {}): PortfolioSnapshot {
+function makeSourceRecordPayload(overrides: Partial<PortfolioSnapshot> = {}): PortfolioSnapshot {
   return {
     kpis: {
       totalPortfolioValue: 2_000_000,
@@ -231,8 +231,8 @@ function makeFrozenPayload(overrides: Partial<PortfolioSnapshot> = {}): Portfoli
         irrAnnualized: 0.085,
       },
     ],
-    overlaysFrozen: true,
-    frozenAt: "2025-04-01T10:00:00Z",
+    sourceRecordReady: true,
+    sourceRecordedAt: "2025-04-01T10:00:00Z",
     overlaySources: {
       capitalCommitted: 1_800_000,
       nonListedValue: 200_000,
@@ -292,7 +292,7 @@ beforeEach(() => {
 // ─── Tests 1–5: CEO workbook seed ────────────────────────────────────────────
 
 describe("CEO tracker workbook seed", () => {
-  it("(1) preserves all workbook numbers in frozen payload", async () => {
+  it("(1) preserves all workbook numbers in source record payload", async () => {
     const wb = makeWorkbookData();
     const response = await callCeoUpload(wb);
     expect(response.status).toBe(200);
@@ -331,24 +331,24 @@ describe("CEO tracker workbook seed", () => {
     expect(aliceCreate.nav_unit_at_sub).toBe(7_200);
   });
 
-  it("(3) snapshot is published + frozen with overlaySources.source = 'CEO tracker workbook'", async () => {
+  it("(3) snapshot is published + source-record with overlaySources.source = 'CEO tracker workbook'", async () => {
     const wb = makeWorkbookData();
     const response = await callCeoUpload(wb);
     expect(response.status).toBe(200);
     const json = (await response.json()) as {
       ok: boolean;
       publicationStatus: string;
-      overlaysFrozen: boolean;
+      sourceRecordReady: boolean;
     };
     expect(json.ok).toBe(true);
     expect(json.publicationStatus).toBe("published");
-    expect(json.overlaysFrozen).toBe(true);
+    expect(json.sourceRecordReady).toBe(true);
 
     const createCall = mockPrismaClient.portfolio_snapshots.create.mock.calls[0][0];
     expect(createCall.data.publication_status).toBe("published");
 
     const payload = payloadFromCreateCall(createCall);
-    expect(payload.overlaysFrozen).toBe(true);
+    expect(payload.sourceRecordReady).toBe(true);
     expect(payload.overlaySources?.source).toBe("CEO tracker workbook");
   });
 
@@ -411,7 +411,7 @@ describe("CEO tracker workbook seed", () => {
     expect(mockPrismaClient.$transaction).not.toHaveBeenCalled();
   });
 
-  it("(5) investorPerformance in frozen payload exactly matches workbook sheet rows", async () => {
+  it("(5) investorPerformance in source record payload exactly matches workbook sheet rows", async () => {
     const wb = makeWorkbookData();
     const response = await callCeoUpload(wb);
     expect(response.status).toBe(200);
@@ -448,12 +448,12 @@ describe("Publish route — no investor profiles blocker", () => {
   });
 
   it("(6) rejects draft when deterministic_checks contains no-investor-profiles blocker", async () => {
-    const frozenPayload = makeFrozenPayload({ overlaysFrozen: true });
+    const sourceRecordPayload = makeSourceRecordPayload({ sourceRecordReady: true });
     mockPrismaClient.portfolio_snapshots.findUnique.mockResolvedValueOnce({
       id: BigInt(55),
       as_of_date: new Date("2025-03-31"),
       publication_status: "draft",
-      payload: frozenPayload,
+      payload: sourceRecordPayload,
       deterministic_checks: [
         {
           severity: "blocker",
@@ -477,17 +477,17 @@ describe("Publish route — no investor profiles blocker", () => {
   });
 });
 
-// ─── Test 7: Frozen CEO seed payload bypasses live investor_profiles reads ────
+// ─── Test 7: source-record CEO seed payload bypasses live investor_profiles reads ────
 
-describe("Frozen CEO seed snapshot — dashboard immutability", () => {
+describe("CEO seed source record — dashboard overlay", () => {
   beforeEach(() => {
     mockPrismaClient.$queryRaw.mockReset().mockResolvedValue([]);
     mockPrismaClient.investor_profiles.findMany.mockReset().mockResolvedValue([]);
   });
 
-  it("(7) frozen CEO seed snapshot never re-reads investor_profiles after publish", async () => {
-    const frozen = makeFrozenPayload({
-      overlaysFrozen: true,
+  it("(7) CEO seed source record falls back to workbook investors when no live profiles exist", async () => {
+    const sourceRecord = makeSourceRecordPayload({
+      sourceRecordReady: true,
       overlaySources: {
         capitalCommitted: 1_800_000,
         nonListedValue: 200_000,
@@ -498,21 +498,21 @@ describe("Frozen CEO seed snapshot — dashboard immutability", () => {
         source: "CEO tracker workbook",
       },
     });
-    mockPrismaClient.$queryRaw.mockResolvedValueOnce([{ as_of_date: "2025-03-31", payload: frozen }]);
+    mockPrismaClient.$queryRaw.mockResolvedValueOnce([{ as_of_date: "2025-03-31", payload: sourceRecord }]);
 
     const result = await getPortfolioSnapshot();
 
-    // Alice's data is from the frozen workbook import, not from a live DB read.
+    // Alice's data is from the source workbook import because no live DB profiles exist.
     expect(result.investorPerformance).toHaveLength(1);
     expect(result.investorPerformance[0].name).toBe("Alice");
     expect(result.investorPerformance[0].navUnitAtSub).toBe(7_200);
 
-    expect(mockPrismaClient.investor_profiles.findMany).not.toHaveBeenCalled();
+    expect(mockPrismaClient.investor_profiles.findMany).toHaveBeenCalled();
   });
 
   it("(8) official .xlsx CEO seed snapshots are not excluded from dashboard reads", async () => {
-    const frozen = makeFrozenPayload({ overlaysFrozen: true });
-    mockPrismaClient.$queryRaw.mockResolvedValueOnce([{ as_of_date: "2025-03-31", payload: frozen }]);
+    const sourceRecord = makeSourceRecordPayload({ sourceRecordReady: true });
+    mockPrismaClient.$queryRaw.mockResolvedValueOnce([{ as_of_date: "2025-03-31", payload: sourceRecord }]);
 
     await getPortfolioSnapshot();
 

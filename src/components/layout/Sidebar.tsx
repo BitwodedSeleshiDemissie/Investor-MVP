@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard, TrendingUp, Building2, Wallet,
-  Upload, Users, Menu, X, SlidersHorizontal,
+  Upload, Users, Menu, X, SlidersHorizontal, Eye,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Role } from "@/lib/auth";
@@ -30,6 +30,7 @@ const adminNav: NavItem[] = [
   { icon: Building2,       label: "Non-Listed Values", href: "/admin/non-listed",   group: "Data Entry" },
   { icon: Wallet,          label: "Cash & Liquidity",  href: "/admin/cash",         group: "Data Entry" },
   { icon: Users,           label: "Investors",         href: "/admin/investors",    group: "Data Entry" },
+  { icon: Eye,             label: "See as user",       href: "/admin/see-as-user",  group: "Review" },
   { icon: SlidersHorizontal, label: "Fund Settings",   href: "/admin/settings",     group: "Foundation" },
 ];
 

@@ -7,6 +7,9 @@ import {
   parsePositionCsvFile,
   type RawRow,
 } from "@/lib/directa-preprocess";
+import type { DirectaLiquidityPdf } from "@/lib/directa-pdf";
+import { calculateCashOutsideBrokerage } from "@/lib/cash";
+import type { HoldingRow, WorkbookData } from "@/lib/excel-loader";
 import {
   buildDeterministicChecks,
   type ReviewCheck,
@@ -33,13 +36,11 @@ import {
   readDirectaSourceDataAfterCutoff,
   syncDirectaCsvFile,
 } from "@/server/directa-ingestion";
+import { syncDirectaPdfFile } from "@/server/directa-pdf-ingestion";
 import type { InvestorPerf, PortfolioSnapshot } from "@/types/portfolio";
 import type { Prisma } from "@/generated/prisma/client";
 
-function todayLocal(): string {
-  const now = new Date();
-  return [now.getFullYear(), String(now.getMonth() + 1).padStart(2, "0"), String(now.getDate()).padStart(2, "0")].join("-");
-}
+export const runtime = "nodejs";
 
 function dbDateOnly(value: string | Date): string {
   if (value instanceof Date) return formatDateOnly(value);
@@ -87,14 +88,71 @@ function previousDirectaCashForComparison(snapshot: PortfolioSnapshot | null): n
   return snapshot.directaCash ?? null;
 }
 
-function latestTransactionDate(rows: RawRow[], cutoffDate: string): string {
-  const cutoff = new Date(`${cutoffDate}T23:59:59`);
-  const considered = rows
-    .filter((row) => row.type !== "Balance" && row.date <= cutoff)
-    .map((row) => row.date)
-    .filter((date) => Number.isFinite(date.getTime()));
-  if (considered.length === 0) return cutoffDate;
-  return formatDateOnly(considered.reduce((a, b) => (a >= b ? a : b)));
+function transactionsThroughFromTradeLog(rows: RawRow[], fallbackDate: string): string {
+  const tradeRows = rows.filter((row) => row.type !== "Balance" && Number.isFinite(row.date.getTime()));
+  const lastTradeRow = tradeRows.at(-1);
+  return lastTradeRow ? formatDateOnly(lastTradeRow.date) : fallbackDate;
+}
+
+function latestLiquidityPdf(pdfs: DirectaLiquidityPdf[]): DirectaLiquidityPdf | null {
+  if (pdfs.length === 0) return null;
+  return [...pdfs].sort((a, b) => (b.statementDate ?? "").localeCompare(a.statementDate ?? ""))[0];
+}
+
+function normalizeSecurityName(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function inferPdfAssetClass(security: string): string {
+  const label = security.toLowerCase();
+  if (label.includes("bond") || label.includes("btp") || label.includes("%") || label.includes("fx ")) return "Bonds";
+  if (label.includes("etf") || label.includes("ucits") || label.includes("ishares") || label.includes("wisdomtree") || label.includes("vaneck") || label.includes("bitwise")) return "ETF";
+  return "Stocks";
+}
+
+function applyPdfListedPositions(workbook: WorkbookData, pdf: DirectaLiquidityPdf): void {
+  const byIsin = new Map(workbook.holdings.filter((h) => h.isin).map((h) => [h.isin, h]));
+  const byName = new Map(workbook.holdings.map((h) => [normalizeSecurityName(h.security), h]));
+  const listedTotal = pdf.listedTotal || pdf.positions.reduce((sum, position) => sum + position.marketValue, 0);
+
+  workbook.holdings = pdf.positions.map((position): HoldingRow => {
+    const prior = byIsin.get(position.isin) ?? byName.get(normalizeSecurityName(position.security));
+    const costBasis = prior?.costBasis ?? position.marketValue;
+    const unrealizedPnl = position.marketValue - costBasis;
+    return {
+      security: position.security,
+      isin: position.isin,
+      assetClass: prior?.assetClass ?? inferPdfAssetClass(position.security),
+      currency: "EUR",
+      shares: position.quantity,
+      avgCost: position.quantity > 0 ? costBasis / position.quantity : position.price,
+      costBasis,
+      currentPrice: position.price,
+      marketValue: position.marketValue,
+      unrealizedPnl,
+      pnlPct: costBasis > 0 ? unrealizedPnl / costBasis : 0,
+      weight: listedTotal > 0 ? position.marketValue / listedTotal : 0,
+    };
+  });
+}
+
+function setWorkbookCashMetrics(args: {
+  workbook: WorkbookData;
+  listedValue: number;
+  brokerageCash: number;
+  cashOutsideBrokerage: number;
+  nonListedValue: number;
+}): void {
+  const totalCash = args.brokerageCash + args.cashOutsideBrokerage;
+  const totalPortfolioValue = args.listedValue + args.nonListedValue + totalCash;
+  args.workbook.portfolioMetrics["Listed Market Value"] = args.listedValue;
+  args.workbook.portfolioMetrics["Total Market Value (Holdings)"] = args.listedValue;
+  args.workbook.portfolioMetrics["Statement Cash"] = args.brokerageCash;
+  args.workbook.portfolioMetrics["Directa Cash"] = args.brokerageCash;
+  args.workbook.portfolioMetrics["External Cash"] = args.cashOutsideBrokerage;
+  args.workbook.portfolioMetrics["Cash Outside Brokerage"] = args.cashOutsideBrokerage;
+  args.workbook.portfolioMetrics["Total Cash"] = totalCash;
+  args.workbook.portfolioMetrics["Total Portfolio Value"] = totalPortfolioValue;
 }
 
 function buildReviewSummary(args: {
@@ -104,23 +162,20 @@ function buildReviewSummary(args: {
   externalCash: number;
 }): string {
   const statementFiles = args.uploaded.filter((file) => file.statementRows > 0).length;
-  const positionFiles = args.uploaded.filter((file) => file.positionRows > 0).length;
-  const valuationText = positionFiles > 0
-    ? "Listed market value is based on the Directa positions export."
-    : "Listed market value is based on the CEO tracker workflow: quantities from Estratto Conto trades and valuation from the latest statement trade prices.";
+  const valuationText = "Listed market value, quantities, and ISINs are based on the Directa PDF account snapshot.";
   const previousTotal = args.previous?.kpis.totalPortfolioValue ?? null;
   const deltaText = previousTotal && previousTotal > 0
     ? ` Portfolio value changed by ${formatMoney(args.payload.kpis.totalPortfolioValue - previousTotal)} versus the previous published snapshot.`
     : "";
   const overlayText = args.externalCash > 0
-    ? ` Non-Directa cash and private overlays are being carried forward from the current tracker/manual context.`
+    ? ` Cash outside brokerage was calculated as the residual after capital committed, brokerage value, and non-listed investments.`
     : "";
   const lendingText = args.uploaded.some((file) => file.hasLendingOrCollateralRows)
     ? ` Directa lending/collateral rows were detected and folded into final positions where applicable.`
     : "";
   return [
-    `The upload produced a draft snapshot for ${args.payload.cutoffDate} using ${statementFiles} Directa statement file(s) and ${positionFiles} positions file(s).`,
-    `${valuationText} Directa statement cash is ${formatMoney(args.payload.directaCash)}.`,
+    `The upload produced a draft snapshot for ${args.payload.cutoffDate} using ${statementFiles} Directa CSV statement file(s) and the Directa PDF account snapshot.`,
+    `${valuationText} Brokerage account cash is ${formatMoney(args.payload.directaCash)}.`,
     `${args.payload.holdings.length} listed holdings were parsed, with total portfolio value ${formatMoney(args.payload.kpis.totalPortfolioValue)}.${deltaText}`,
     `${lendingText}${overlayText}`.trim(),
     "If these figures do not match finance records, do not publish; correct the source files or contact the dev team.",
@@ -161,10 +216,10 @@ Be factual and specific. Total output must be under 180 words.
 
 Questions to answer:
 1. Positions & trades: Do the quantities and holdings count look coherent with the Estratto Conto trade history? If no positions file exists, that is acceptable in CEO tracker valuation mode.
-2. Cash: Does the Directa cash figure make sense given the trades and income events this month?
+2. Cash: Does the brokerage account cash figure from the Directa liquidity PDF make sense?
 3. Month-on-month change: Is the total portfolio change from last month within a plausible range, or does it need explanation?
 4. Lending / collateral: Were lending or collateral rows detected? Do they appear fully reconciled in the final positions?
-5. Non-Directa data: Is outside-Directa data (non-listed assets, external cash) being used only where Directa has no data for those items?
+5. Non-Directa data: Are non-listed assets admin-entered and is cash outside brokerage calculated as the residual?
 
 End with a one-line verdict: "Ready to publish." or "Needs manual review — [reason]."`,
           },
@@ -175,14 +230,13 @@ End with a one-line verdict: "Ready to publish." or "Needs manual review — [re
               currentPortfolioValue: args.payload.kpis.totalPortfolioValue,
               currentListedValue: args.payload.composition.listed,
               currentDirectaCash: args.payload.directaCash,
-              currentNonDirectaCashOverlay: args.externalCash,
+              currentCashOutsideBrokerage: args.externalCash,
+              brokerageCashSource: args.payload.overlaySources?.brokerageCashSource,
               currentHoldingsCount: args.payload.holdings.length,
               previousPortfolioValue: previousTotal,
               previousDirectaCash: previousCash,
               previousHoldingsCount: previousHoldings,
-              valuationMode: args.uploaded.some((file) => file.positionRows > 0)
-                ? "Directa positions export"
-                : "CEO tracker statement-only mode",
+              valuationMode: "Directa PDF account snapshot for positions/cash; CSV exports for transaction history",
               uploadedFiles: args.uploaded.map((file) => ({
                 name: file.name,
                 statementRows: file.statementRows,
@@ -220,16 +274,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid form data" }, { status: 400 });
   }
 
-  const MAX_CSV_BYTES = 10 * 1024 * 1024; // 10 MB per CSV
+  const MAX_CSV_BYTES = 10 * 1024 * 1024; // 10 MB per CSV/PDF
   const MAX_MANUAL_INPUTS_BYTES = 64 * 1024; // 64 KB
 
   const uploadedFiles = formData.getAll("files") as File[];
   if (uploadedFiles.length === 0) {
-    return NextResponse.json({ error: "No CSV files uploaded" }, { status: 400 });
+    return NextResponse.json({ error: "No Directa files uploaded" }, { status: 400 });
   }
   for (const file of uploadedFiles) {
     if (file.size > MAX_CSV_BYTES) {
       return NextResponse.json({ error: `File "${file.name}" exceeds the 10 MB per-file limit` }, { status: 413 });
+    }
+    const lowerName = file.name.toLowerCase();
+    if (!lowerName.endsWith(".csv") && !lowerName.endsWith(".pdf")) {
+      return NextResponse.json({ error: `File "${file.name}" must be a Directa CSV or PDF` }, { status: 400 });
     }
   }
 
@@ -261,23 +319,69 @@ export async function POST(req: NextRequest) {
   const prisma = getPrisma();
 
   // Store raw files and sync parsed Directa rows into relational source tables.
-  const newFilenames: string[] = [];
+  const csvFilenames: string[] = [];
+  const pdfFilenames: string[] = [];
+  const liquidityPdfs: DirectaLiquidityPdf[] = [];
   const uploadedCsvs: UploadedCsv[] = [];
-  for (const file of uploadedFiles) {
-    if (!file.name.toLowerCase().endsWith(".csv")) continue;
+  const pdfUploadFiles = uploadedFiles.filter((file) => file.name.toLowerCase().endsWith(".pdf"));
+  const csvUploadFiles = uploadedFiles.filter((file) => file.name.toLowerCase().endsWith(".csv"));
+
+  if (cutoffDateOverride) {
+    for (const file of csvUploadFiles) {
+      const filenameMonthEnd = monthEndFromFilename(file.name);
+      if (filenameMonthEnd && filenameMonthEnd !== cutoffDateOverride) {
+        return NextResponse.json(
+          { error: `Selected snapshot month ends ${cutoffDateOverride}, but CSV "${file.name}" appears to be for ${filenameMonthEnd}. Select the matching month or upload the matching CSV.` },
+          { status: 400 }
+        );
+      }
+    }
+  }
+
+  for (const file of pdfUploadFiles) {
+    try {
+      const parsed = await syncDirectaPdfFile({
+        fileName: file.name,
+        content: Buffer.from(await file.arrayBuffer()),
+        uploadedBy: session.email ?? "admin",
+      });
+      liquidityPdfs.push(parsed);
+      pdfFilenames.push(file.name);
+    } catch (err) {
+      return NextResponse.json(
+        { error: err instanceof Error ? err.message : `Could not parse Directa PDF "${file.name}"` },
+        { status: 422 }
+      );
+    }
+  }
+
+  if (liquidityPdfs.length === 0) {
+    return NextResponse.json({ error: "Upload the Directa Situazione Patrimoniale PDF so liquidity, listed value, and ISINs come from the official statement." }, { status: 400 });
+  }
+  const liquidityPdf = latestLiquidityPdf(liquidityPdfs)!;
+  if (cutoffDateOverride && liquidityPdf.statementDate && liquidityPdf.statementDate !== cutoffDateOverride) {
+    return NextResponse.json(
+      { error: `Selected snapshot month ends ${cutoffDateOverride}, but the Directa PDF is dated ${liquidityPdf.statementDate}. Select the matching month or upload the matching PDF.` },
+      { status: 400 }
+    );
+  }
+  const selectedCutoffDate = cutoffDateOverride ?? liquidityPdf.statementDate ?? new Date().toISOString().slice(0, 10);
+
+  for (const file of csvUploadFiles) {
     const content = await file.text();
     uploadedCsvs.push(classifyUploadedCsv(file.name, content));
     const synced = await syncDirectaCsvFile({
       fileName: file.name,
       content,
-      monthEnd: cutoffDateOverride ?? monthEndFromFilename(file.name),
+      monthEnd: selectedCutoffDate,
       uploadedBy: session.email ?? "admin",
     });
-    newFilenames.push(synced.canonicalFilename);
+    csvFilenames.push(synced.canonicalFilename);
   }
-  if (newFilenames.length === 0) {
+  if (csvFilenames.length === 0) {
     return NextResponse.json({ error: "No valid CSV files found (expected .csv)" }, { status: 400 });
   }
+  const newFilenames = [...csvFilenames, ...pdfFilenames];
 
   const previousRows = await prisma.$queryRaw<Array<{ id: bigint; payload: PortfolioSnapshot }>>`
     SELECT id, payload
@@ -309,19 +413,26 @@ export async function POST(req: NextRequest) {
   const nonListedValue = formManualItems
     .filter((item) => item.item_type.toLowerCase() !== "cash")
     .reduce((s, item) => s + Number(item.value), 0);
-  const externalCash = formManualItems
-    .filter((item) => item.item_type.toLowerCase() === "cash")
-    .reduce((s, item) => s + Number(item.value), 0);
+  let externalCash = 0;
 
-  const [controlRow, fundSettings] = await Promise.all([
+  const [controlRow, fundSettings, profileRows] = await Promise.all([
     prisma.admin_controls.findFirst({
       orderBy: [{ as_of_date: "desc" }, { created_at: "desc" }],
       select: { capital_committed: true, portfolio_id: true, investor_name: true },
     }),
     getFundSettings(),
+    prisma.investor_profiles.findMany({
+      where: { active: true },
+      orderBy: [{ subscription_date: "asc" }, { name: "asc" }],
+      select: { name: true, investor_type: true, capital_eur: true, units: true, subscription_date: true, nav_unit_at_sub: true },
+    }),
   ]);
   const settings = calculationSettings(fundSettings);
-  const capitalCommitted = controlRow ? Number(controlRow.capital_committed) : 0;
+  const snapshotProfileRows = profileRows.filter((profile) => dbDateOnly(profile.subscription_date) <= selectedCutoffDate);
+  const profileCapitalCommitted = snapshotProfileRows.reduce((sum, profile) => sum + Number(profile.capital_eur), 0);
+  const capitalCommitted = profileCapitalCommitted > 0
+    ? profileCapitalCommitted
+    : controlRow ? Number(controlRow.capital_committed) : 0;
   const approvedPortfolioId = controlRow?.portfolio_id ?? fundSettings.portfolioId;
   const approvedInvestorName = controlRow?.investor_name ?? fundSettings.fundDisplayName;
 
@@ -348,6 +459,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Preprocessing failed. Verify the uploaded CSV files are valid Directa exports." }, { status: 422 });
   }
 
+  applyPdfListedPositions(workbook, liquidityPdf);
+  const brokerageCash = liquidityPdf.liquidity;
+  const listedMarketValue = liquidityPdf.listedTotal;
+  externalCash = calculateCashOutsideBrokerage({
+    capitalCommitted,
+    listedValue: listedMarketValue,
+    brokerageCash,
+    nonListedValue,
+  });
+  setWorkbookCashMetrics({
+    workbook,
+    listedValue: listedMarketValue,
+    brokerageCash,
+    cashOutsideBrokerage: externalCash,
+    nonListedValue,
+  });
+
   const kpis = computeKPIs(workbook, settings);
   const composition = computeComposition(workbook);
 
@@ -366,34 +494,26 @@ export async function POST(req: NextRequest) {
       realized: Number(workbook.portfolioMetrics["Realized P&L"] ?? 0),
       netTotal: Number(workbook.portfolioMetrics["Net Total P&L"] ?? 0),
     },
-    directaCash: Number(workbook.portfolioMetrics["Statement Cash"] ?? workbook.portfolioMetrics["Directa Cash"] ?? 0),
-    cutoffDate: formatDateOnly(workbook.cutoffDate),
+    directaCash: brokerageCash,
+    cutoffDate: selectedCutoffDate,
     investorName: approvedInvestorName,
     portfolioId: approvedPortfolioId,
     warnings: checkWarnings(workbook),
     investorPerformance: [],
   };
-  if (cutoffDateOverride) {
-    payload.cutoffDate = cutoffDateOverride;
-    payload.irr.valuationDate = cutoffDateOverride;
-  }
+  payload.irr.valuationDate = selectedCutoffDate;
 
-  const profileRows = await prisma.investor_profiles.findMany({
-    where: { active: true },
-    orderBy: [{ subscription_date: "asc" }, { name: "asc" }],
-    select: { name: true, investor_type: true, capital_eur: true, units: true, subscription_date: true, nav_unit_at_sub: true },
-  });
   let profileFundIrr: number | null = null;
-  if (profileRows.length > 0) {
-    const totalUnits = profileRows.reduce((s, p) => s + p.units, 0);
+  if (snapshotProfileRows.length > 0) {
+    const totalUnits = snapshotProfileRows.reduce((s, p) => s + p.units, 0);
     const navUnit = totalUnits > 0 ? kpis.totalPortfolioValue / totalUnits : 0;
     const cutoffTs = new Date(payload.cutoffDate);
-    profileFundIrr = computeFundIrrFromProfiles(profileRows, payload.cutoffDate, kpis.totalPortfolioValue);
+    profileFundIrr = computeFundIrrFromProfiles(snapshotProfileRows, payload.cutoffDate, kpis.totalPortfolioValue);
     if (profileFundIrr !== null) {
       payload.irr.fundIrr = profileFundIrr;
       payload.irr.investorIrr = profileFundIrr;
     }
-    payload.investorPerformance = profileRows.map((p): InvestorPerf => {
+    payload.investorPerformance = snapshotProfileRows.map((p): InvestorPerf => {
       const capitalEur = p.capital_eur;
       const units = p.units;
       const subscriptionDate = dbDateOnly(p.subscription_date);
@@ -405,21 +525,22 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const frozenAt = new Date().toISOString();
+  const sourceRecordedAt = new Date().toISOString();
   payload.dataFreshness = {
-    lastUploadAt: frozenAt,
-    transactionsThrough: latestTransactionDate(sourceData.transactions, payload.cutoffDate),
-    positionsAsOf: payload.cutoffDate,
+    lastUploadAt: sourceRecordedAt,
+    transactionsThrough: transactionsThroughFromTradeLog(sourceData.transactions, payload.cutoffDate),
+    positionsAsOf: liquidityPdf.statementDate ?? payload.cutoffDate,
     sourceFiles: newFilenames,
   };
-  payload.overlaysFrozen = true;
-  payload.frozenAt = frozenAt;
+  payload.sourceRecordReady = true;
+  payload.sourceRecordedAt = sourceRecordedAt;
   payload.overlaySources = {
     capitalCommitted,
     nonListedValue,
     externalCash,
     overlayItemCount: formManualItems.length,
-    investorProfileCount: profileRows.length,
+    investorProfileCount: snapshotProfileRows.length,
+    brokerageCashSource: { type: "directa_pdf", fileName: liquidityPdf.filename, statementDate: liquidityPdf.statementDate },
     manualItems: formManualItems.map((item) => ({
       item_key: item.item_key, item_type: item.item_type, value: Number(item.value),
       display_name: item.display_name, subcategory: item.subcategory,
@@ -442,48 +563,51 @@ export async function POST(req: NextRequest) {
 
   let snapshotId: number;
   try {
-    const result = await prisma.$transaction(async (tx) => {
-      const inserted = await tx.portfolio_snapshots.create({
-        data: {
-          as_of_date: new Date(payload.cutoffDate),
-          source_file: newFilenames.join(", "),
-          payload: payload as unknown as Prisma.InputJsonValue,
-          publication_status: "draft",
-          audit_report: {
-            status: canPublish ? "ready_to_publish" : "blocked",
-            uploadedFiles: uploadedCsvs.map((file) => ({
-              name: file.name, statementRows: file.statementRows,
-              positionRows: file.positionRows, hasLendingOrCollateralRows: file.hasLendingOrCollateralRows,
-            })),
-            previousSnapshotId,
-            canPublish,
-            auditSummaryProvider: auditSummary.provider,
-            generatedAt: frozenAt,
-          } as Prisma.InputJsonValue,
-          deterministic_checks: deterministicChecks as unknown as Prisma.InputJsonValue,
-          ai_summary: aiSummary,
-          supersedes_snapshot_id: previousSnapshotId ? BigInt(previousSnapshotId) : null,
-          overlays_frozen: true,
-        },
-        select: { id: true },
-      });
-      await tx.portfolio_snapshot_artifacts.create({
-        data: {
-          snapshot_id: inserted.id,
-          artifact_type: "preprocessed_workbook",
-          file_name: auditFileName,
-          mime_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          content: Buffer.from(auditWorkbook),
-          metadata: {
-            cutoffDate: payload.cutoffDate,
-            sourceFiles: newFilenames,
-            storedBatches: sourceData.batches.map((batch) => batch.canonicalFilename),
-            generatedFrom: "statement_csv_upload",
-          } as Prisma.InputJsonValue,
-        },
-      });
-      return inserted;
-    });
+    const result = await prisma.$transaction(
+      async (tx) => {
+        const inserted = await tx.portfolio_snapshots.create({
+          data: {
+            as_of_date: new Date(payload.cutoffDate),
+            source_file: newFilenames.join(", "),
+            payload: payload as unknown as Prisma.InputJsonValue,
+            publication_status: "draft",
+            audit_report: {
+              status: canPublish ? "ready_to_publish" : "blocked",
+              uploadedFiles: uploadedCsvs.map((file) => ({
+                name: file.name, statementRows: file.statementRows,
+                positionRows: file.positionRows, hasLendingOrCollateralRows: file.hasLendingOrCollateralRows,
+              })),
+              previousSnapshotId,
+              canPublish,
+              auditSummaryProvider: auditSummary.provider,
+              generatedAt: sourceRecordedAt,
+            } as Prisma.InputJsonValue,
+            deterministic_checks: deterministicChecks as unknown as Prisma.InputJsonValue,
+            ai_summary: aiSummary,
+            supersedes_snapshot_id: previousSnapshotId ? BigInt(previousSnapshotId) : null,
+          },
+          select: { id: true },
+        });
+        await tx.portfolio_snapshot_artifacts.create({
+          data: {
+            snapshot_id: inserted.id,
+            artifact_type: "preprocessed_workbook",
+            file_name: auditFileName,
+            mime_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            content: Buffer.from(auditWorkbook),
+            metadata: {
+              cutoffDate: payload.cutoffDate,
+              sourceFiles: newFilenames,
+              storedBatches: sourceData.batches.map((batch) => batch.canonicalFilename),
+              generatedFrom: "statement_csv_and_directa_pdf_upload",
+              brokerageCashSource: payload.overlaySources?.brokerageCashSource,
+            } as Prisma.InputJsonValue,
+          },
+        });
+        return inserted;
+      },
+      { maxWait: 10_000, timeout: 30_000 }
+    );
     snapshotId = Number(result.id);
   } catch {
     return NextResponse.json({ error: "Snapshot save failed. Check server logs for details." }, { status: 500 });
@@ -506,7 +630,7 @@ export async function POST(req: NextRequest) {
     auditFileName,
     filesStored: sourceData.batches.length,
     newFiles: newFilenames,
-    profileInvestorCount: profileRows.length,
+    profileInvestorCount: snapshotProfileRows.length,
     profileFundIrr,
     portfolioValue: kpis.totalPortfolioValue,
     fundIrr: payload.irr.fundIrr,

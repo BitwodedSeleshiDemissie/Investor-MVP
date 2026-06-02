@@ -287,6 +287,7 @@ function getTransactionType(
 
 export interface RawRow {
   sourceFile: string;
+  rowNumber?: number;
   fileDate: Date | null;
   date: Date;
   settlement: Date | null;
@@ -353,6 +354,7 @@ export function parseCsvFile(content: string, filename: string): RawRow[] {
 
     rows.push({
       sourceFile: filename,
+      rowNumber: rows.length + 1,
       fileDate,
       date: d,
       settlement: parseItalianDate(parts[1]),

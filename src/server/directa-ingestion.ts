@@ -307,16 +307,7 @@ export async function checkDirectaCsvDuplicate({
     },
   });
   if (exact) {
-    return {
-      originalFilename: fileName,
-      canonicalFilename: exact.canonical_filename,
-      duplicateKind: "exact_file",
-      batchId: Number(exact.id),
-      filename: exact.filename,
-      monthEnd: dateOnly(exact.month_end),
-      uploadedAt: exact.uploaded_at.toISOString(),
-      status: exact.status,
-    };
+    return null;
   }
 
   const sameName = await prisma.directa_upload_batches.findFirst({
@@ -381,7 +372,7 @@ export async function readDirectaSourceDataAfterCutoff(
   const [transactions, positions] = await Promise.all([
     prisma.directa_transactions.findMany({
       where: { upload_batch_id: { in: batchIds } },
-      orderBy: [{ trade_date: "asc" }, { upload_batch_id: "asc" }, { row_number: "asc" }],
+      orderBy: [{ upload_batch_id: "asc" }, { row_number: "asc" }],
     }),
     prisma.directa_positions.findMany({
       where: { upload_batch_id: { in: batchIds } },
@@ -402,6 +393,7 @@ export async function readDirectaSourceDataAfterCutoff(
     })),
     transactions: transactions.map((row): RawRow => ({
       sourceFile: row.source_file,
+      rowNumber: row.row_number,
       fileDate: dbDate(row.file_date),
       date: dbDate(row.trade_date)!,
       settlement: dbDate(row.settlement_date),

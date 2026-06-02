@@ -23,10 +23,20 @@ function setColumnWidths(sheet: XLSX.WorkSheet, widths: number[]): void {
 export function buildAuditWorkbookBuffer(workbook: WorkbookData): Buffer {
   const audit = XLSX.utils.book_new();
 
-  const metricEntries = Object.entries(workbook.portfolioMetrics).map(([key, value]) => [
-    key === "Directa Cash" ? "Statement Cash" : key,
-    value,
-  ]);
+  function displayMetricName(key: string): string {
+    if (key === "Statement Cash" || key === "Directa Cash") return "Brokerage Account Cash";
+    if (key === "External Cash") return "Cash Outside Brokerage";
+    return key;
+  }
+
+  const seenMetrics = new Set<string>();
+  const metricEntries = Object.entries(workbook.portfolioMetrics)
+    .map(([key, value]) => [displayMetricName(key), value] as const)
+    .filter(([key]) => {
+      if (seenMetrics.has(key)) return false;
+      seenMetrics.add(key);
+      return true;
+    });
   const metricRows: unknown[][] = [["Metric", "Value", "", "Metric", "Value"]];
   const midpoint = Math.ceil(metricEntries.length / 2);
   for (let i = 0; i < midpoint; i++) {

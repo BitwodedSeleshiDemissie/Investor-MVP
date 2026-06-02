@@ -1,4 +1,5 @@
 import { dbEnabled, getPrisma } from "@/db/prisma";
+import { calculateCashOutsideBrokerage } from "@/lib/cash";
 import type {
   AdminDictionaryItem,
   ManualValueRow,
@@ -68,11 +69,35 @@ export async function getSnapshotHistory(): Promise<SnapshotHistoryRow[]> {
       s.as_of_date,
       COALESCE(
         (
-          SELECT MAX(dt.trade_date)::text
+          SELECT dt.trade_date::text
           FROM directa_transactions dt
-          WHERE dt.trade_date <= s.as_of_date
+          JOIN directa_upload_batches b ON b.id = dt.upload_batch_id
+          WHERE dt.transaction_type <> 'Balance'
+            AND (
+              dt.source_file IN (
+                SELECT source_file.value
+                FROM jsonb_array_elements_text(
+                  CASE
+                    WHEN jsonb_typeof(s.payload #> '{dataFreshness,sourceFiles}') = 'array'
+                      THEN s.payload #> '{dataFreshness,sourceFiles}'
+                    ELSE '[]'::jsonb
+                  END
+                ) AS source_file(value)
+                WHERE source_file.value ILIKE '%.csv'
+              )
+              OR (
+                jsonb_typeof(s.payload #> '{dataFreshness,sourceFiles}') IS DISTINCT FROM 'array'
+                AND dt.trade_date <= s.as_of_date
+              )
+            )
+          ORDER BY
+            COALESCE(b.month_end, dt.file_date, dt.trade_date) DESC,
+            b.uploaded_at DESC,
+            b.id DESC,
+            dt.row_number DESC
+          LIMIT 1
         ),
-        s.payload -> 'dataFreshness' ->> 'transactionsThrough'
+        NULLIF(s.payload -> 'dataFreshness' ->> 'transactionsThrough', '')
       ) AS transactions_through,
       s.publication_status,
       (s.payload -> 'kpis' ->> 'totalPortfolioValue')::numeric AS portfolio_value,
@@ -211,7 +236,7 @@ export type FixedPortfolioValues = {
   privateParticipations: number;
   privateLoanPrincipal: number;
   cashOutsideDirecta: number;
-  cashOutsideDirectaSource: "manual" | "snapshot" | "none";
+  cashOutsideDirectaSource: "calculated" | "source_record" | "none";
   statementCash: number;
   history: Array<{
     asOfDate: string;
@@ -248,12 +273,9 @@ function parseSnapshotPayload(value: unknown): PortfolioSnapshot | null {
   return value as PortfolioSnapshot;
 }
 
-function getFrozenCashOutsideDirecta(value: unknown): number {
+function getSourceRecordCashOutsideBrokerage(value: unknown): number {
   const snap = parseSnapshotPayload(value);
   if (!snap) return 0;
-  if (snap.overlaySources?.cashFormula) {
-    return Number(snap.overlaySources.externalCash ?? Math.max(0, Number(snap.composition?.cash ?? 0) - Number(snap.directaCash ?? 0)));
-  }
   const manualItems = snap.overlaySources?.manualItems ?? [];
   const cashItems = manualItems.filter((item) => {
     const itemType = item.item_type.toLowerCase();
@@ -282,14 +304,20 @@ export async function getFixedPortfolioValues(): Promise<FixedPortfolioValues> {
 
   const KEYS = ["PRIVATE_PARTICIPATIONS", "PRIVATE_LOAN_PRINCIPAL", "CASH_OUTSIDE_DIRECTA"];
 
-  const [latestRows, historyRows, snapRows] = await Promise.all([
-    prisma.$queryRaw<Array<{ item_key: string; value: string }>>`
-      SELECT DISTINCT ON (item_key) item_key, value::text AS value
-      FROM admin_manual_values
-      WHERE item_key = ANY(${KEYS}::text[])
-         OR item_key LIKE 'TRACKER_PARTICIPATION_%'
-         OR item_key LIKE 'TRACKER_LOAN_%'
-      ORDER BY item_key, as_of_date DESC, created_at DESC
+  const [latestRows, historyRows, snapRows, profileCapitalRows, controlRow] = await Promise.all([
+    prisma.$queryRaw<Array<{ item_key: string; item_type: string | null; value: string }>>`
+      WITH picked AS (
+        SELECT DISTINCT ON (mv.item_key)
+          mv.item_key,
+          mv.value
+        FROM admin_manual_values mv
+        ORDER BY mv.item_key, mv.as_of_date DESC, mv.created_at DESC
+      )
+      SELECT p.item_key, d.item_type, p.value::text AS value
+      FROM picked p
+      JOIN asset_dictionary d ON d.item_key = p.item_key
+      WHERE d.active = TRUE
+      ORDER BY d.sort_order, p.item_key
     `,
     prisma.$queryRaw<Array<{ as_of_date: Date; item_key: string; value: string }>>`
       SELECT as_of_date, item_key, value::text AS value
@@ -316,6 +344,15 @@ export async function getFixedPortfolioValues(): Promise<FixedPortfolioValues> {
       ORDER BY as_of_date DESC, created_at DESC
       LIMIT 1
     `,
+    prisma.$queryRaw<Array<{ capital_committed: string | null }>>`
+      SELECT COALESCE(SUM(capital_eur), 0)::numeric::text AS capital_committed
+      FROM investor_profiles
+      WHERE active = TRUE
+    `,
+    prisma.admin_controls.findFirst({
+      orderBy: [{ as_of_date: "desc" }, { created_at: "desc" }],
+      select: { capital_committed: true },
+    }),
   ]);
 
   const byKey = new Map(latestRows.map((r) => [r.item_key, Number(r.value)]));
@@ -323,12 +360,32 @@ export async function getFixedPortfolioValues(): Promise<FixedPortfolioValues> {
   const detailedLoanRows = latestRows.filter((r) => r.item_key.startsWith("TRACKER_LOAN_"));
   const detailedParticipations = detailedParticipationRows.reduce((s, r) => s + Number(r.value), 0);
   const detailedLoans = detailedLoanRows.reduce((s, r) => s + Number(r.value), 0);
-  const manualCashOutside = byKey.get("CASH_OUTSIDE_DIRECTA");
-  const frozenCashOutside = getFrozenCashOutsideDirecta(snapRows[0]?.payload);
-  const cashOutsideDirecta = manualCashOutside ?? frozenCashOutside;
-  const cashOutsideDirectaSource = manualCashOutside !== undefined
-    ? "manual"
-    : frozenCashOutside > 0 ? "snapshot" : "none";
+  const manualNonListedRows = latestRows.filter((row) => {
+    const itemType = (row.item_type ?? "").toLowerCase();
+    if (itemType) return itemType !== "cash";
+    return row.item_key !== "CASH_OUTSIDE_DIRECTA" && !row.item_key.includes("CASH");
+  });
+  const manualNonListedValue = manualNonListedRows.reduce((sum, row) => sum + Number(row.value), 0);
+  const snap = parseSnapshotPayload(snapRows[0]?.payload);
+  const statementCash = Number(snapRows[0]?.direct_cash ?? 0);
+  const snapshotNonListed = Number(snap?.composition?.nonListed ?? 0);
+  const snapshotListed = Number(snap?.composition?.listed ?? 0);
+  const effectiveNonListed = manualNonListedRows.length > 0 ? manualNonListedValue : snapshotNonListed;
+  const profileCapitalCommitted = Number(profileCapitalRows[0]?.capital_committed ?? 0);
+  const capitalCommitted = profileCapitalCommitted > 0
+    ? profileCapitalCommitted
+    : Number(controlRow?.capital_committed ?? snap?.kpis?.capitalCommitted ?? 0);
+  const calculatedCashOutside = calculateCashOutsideBrokerage({
+    capitalCommitted,
+    listedValue: snapshotListed,
+    brokerageCash: statementCash,
+    nonListedValue: effectiveNonListed,
+  });
+  const sourceRecordCashOutside = getSourceRecordCashOutsideBrokerage(snapRows[0]?.payload);
+  const cashOutsideDirecta = capitalCommitted > 0 ? calculatedCashOutside : sourceRecordCashOutside;
+  const cashOutsideDirectaSource = capitalCommitted > 0
+    ? "calculated"
+    : sourceRecordCashOutside > 0 ? "source_record" : "none";
 
   const rowsByDate = new Map<string, typeof historyRows>();
   for (const r of historyRows) {
@@ -361,7 +418,11 @@ export async function getFixedPortfolioValues(): Promise<FixedPortfolioValues> {
     });
 
   return {
-    privateParticipations: detailedParticipationRows.length > 0 ? detailedParticipations : byKey.get("PRIVATE_PARTICIPATIONS") ?? 0,
+    privateParticipations: detailedParticipationRows.length > 0
+      ? detailedParticipations
+      : byKey.has("PRIVATE_PARTICIPATIONS")
+        ? byKey.get("PRIVATE_PARTICIPATIONS") ?? 0
+        : manualNonListedRows.length > 0 ? Math.max(0, manualNonListedValue - (byKey.get("PRIVATE_LOAN_PRINCIPAL") ?? detailedLoans)) : snapshotNonListed,
     privateLoanPrincipal: detailedLoanRows.length > 0 ? detailedLoans : byKey.get("PRIVATE_LOAN_PRINCIPAL") ?? 0,
     cashOutsideDirecta,
     cashOutsideDirectaSource,

@@ -39,22 +39,23 @@ export default async function AdminPage() {
   const activeInvestors = investorProfiles.filter((p) => p.active);
   const totalNonListed  = privateParticipations + privateLoanPrincipal;
   const totalCash       = statementCash + cashOutsideDirecta;
-  const latest          = snapshotHistory[0];
-  const latestSourceFiles = latest?.sourceFile
-    ? latest.sourceFile.split(",").map((file) => file.trim()).filter(Boolean)
+  const latestUpload    = snapshotHistory[0];
+  const latestPublished = snapshotHistory.find((snapshot) => snapshot.status === "published") ?? null;
+  const latestSourceFiles = latestPublished?.sourceFile
+    ? latestPublished.sourceFile.split(",").map((file) => file.trim()).filter(Boolean)
     : [];
   const latestSourceLabel = latestSourceFiles.length > 0
     ? latestSourceFiles.slice(0, 2).join(", ") + (latestSourceFiles.length > 2 ? ` +${latestSourceFiles.length - 2}` : "")
     : "No source file recorded";
-  const latestTransactionsThrough = latest?.transactionsThrough ?? latest?.cutoffDate ?? "";
+  const latestTransactionsThrough = latestPublished?.transactionsThrough ?? latestPublished?.cutoffDate ?? "";
 
   const steps = [
     {
       label: "Baseline snapshot uploaded",
-      detail: latest
-        ? `Latest: ${formatDate(latest.cutoffDate)} · transactions through ${formatDate(latestTransactionsThrough)} · ${latest.status}`
+      detail: latestPublished
+        ? `Published: ${formatDate(latestPublished.cutoffDate)} · data through ${formatDate(latestTransactionsThrough)}`
         : "No snapshot — upload the CEO tracker workbook",
-      ok: snapshotHistory.length > 0,
+      ok: Boolean(latestPublished),
     },
     {
       label: "Non-listed values entered",
@@ -64,10 +65,10 @@ export default async function AdminPage() {
       ok: totalNonListed > 0,
     },
     {
-      label: "Cash outside Directa entered",
+      label: "Cash outside brokerage calculated",
       detail: cashOutsideDirecta > 0
-        ? `${formatEur(cashOutsideDirecta)} (statement cash ${formatEur(statementCash)} is auto from Directa)`
-        : "No external cash balance entered",
+        ? `${formatEur(cashOutsideDirecta)} residual (brokerage cash ${formatEur(statementCash)} from Directa)`
+        : "No outside-brokerage cash residual",
       ok: cashOutsideDirecta > 0,
     },
     {
@@ -101,9 +102,9 @@ export default async function AdminPage() {
           href: "/admin/cash",
           icon: Wallet,
           title: "Cash",
-          description: `Statement cash comes from Directa automatically. Enter Cash Outside Directa here — total shown to investors.`,
+          description: `Brokerage cash comes from the Directa PDF. Cash outside brokerage is calculated automatically.`,
           stat: totalCash > 0
-            ? `${formatEur(statementCash)} statement · ${formatEur(cashOutsideDirecta)} external`
+            ? `${formatEur(statementCash)} brokerage · ${formatEur(cashOutsideDirecta)} outside`
             : "No cash data",
           color: "text-blue-400",
           bgColor: "bg-blue-500/10",
@@ -139,17 +140,17 @@ export default async function AdminPage() {
     },
     {
       label: "Data Upload",
-      description: "Upload the CEO tracker once as the official baseline, then Directa CSVs each month for listed holdings.",
+      description: "Upload the CEO tracker once as the official baseline, then Directa CSVs plus the Directa PDF each month.",
       items: [
         {
           href: "/admin/upload",
           icon: Upload,
           title: "Upload Data",
-          description: "Directa CSVs (listed holdings, trades, income, risk series) and CEO tracker workbook",
-          stat: latest ? `Last upload: ${formatDateTime(latest.createdAt)}` : "No uploads yet",
+          description: "CSV exports for transactions and income; PDF snapshot for holdings, liquidity, market value, and ISINs",
+          stat: latestUpload ? `Last upload: ${formatDateTime(latestUpload.createdAt)}` : "No uploads yet",
           color: "text-emerald-400",
           bgColor: "bg-emerald-500/10",
-          ok: snapshotHistory.length > 0,
+          ok: Boolean(latestUpload),
         },
       ],
     },
@@ -183,7 +184,7 @@ export default async function AdminPage() {
       </div>
 
       {/* Data freshness */}
-      {latest && (
+      {latestPublished && (
         <div
           className="rounded-2xl border border-border/60 overflow-hidden"
           style={{ background: "hsl(var(--card))", boxShadow: "var(--shadow-card)" }}
@@ -199,8 +200,8 @@ export default async function AdminPage() {
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-border/40">
             <div className="px-5 py-4">
-              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Last upload</p>
-              <p className="mt-1 font-numeric text-sm font-semibold text-foreground">{formatDateTime(latest.createdAt)}</p>
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Last published</p>
+              <p className="mt-1 font-numeric text-sm font-semibold text-foreground">{formatDateTime(latestPublished.publishedAt ?? latestPublished.createdAt)}</p>
             </div>
             <div className="px-5 py-4">
               <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Transactions through</p>
@@ -208,7 +209,7 @@ export default async function AdminPage() {
             </div>
             <div className="px-5 py-4">
               <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Source files</p>
-              <p className="mt-1 text-sm font-semibold text-foreground truncate" title={latest.sourceFile || latestSourceLabel}>
+              <p className="mt-1 text-sm font-semibold text-foreground truncate" title={latestPublished.sourceFile || latestSourceLabel}>
                 {latestSourceLabel}
               </p>
             </div>
@@ -274,15 +275,15 @@ export default async function AdminPage() {
             className="px-5 py-4 border-b border-border/60"
             style={{ background: "hsl(222 44% 7%)" }}
           >
-            <p className="text-sm font-semibold text-foreground">Current Non-Directa Values</p>
-            <p className="text-xs text-muted-foreground mt-0.5">What will be added to Directa listed holdings in the next snapshot</p>
+            <p className="text-sm font-semibold text-foreground">Current Portfolio Inputs</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Manual non-listed values plus brokerage cash and residual cash used in the next snapshot</p>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-y sm:divide-y-0 divide-border/40">
             {[
               { label: "Private Participations", value: privateParticipations, icon: TrendingUp, color: "text-purple-400" },
               { label: "Private Loan Principal", value: privateLoanPrincipal,  icon: HandCoins,  color: "text-blue-400" },
-              { label: "Statement Cash",         value: statementCash,         icon: CreditCard, color: "text-emerald-400" },
-              { label: "Cash Outside Directa",   value: cashOutsideDirecta,    icon: Wallet,     color: "text-sky-400" },
+              { label: "Brokerage Cash",         value: statementCash,         icon: CreditCard, color: "text-emerald-400" },
+              { label: "Cash Outside Brokerage", value: cashOutsideDirecta,    icon: Wallet,     color: "text-sky-400" },
             ].map(({ label, value, icon: Icon, color }) => (
               <div key={label} className="px-5 py-4">
                 <div className="flex items-center gap-1.5 mb-2">

@@ -4,8 +4,8 @@
  * CEO tracker Excel workbook import — the primary source of truth for historical
  * and current portfolio data through end of CEO-managed Excel period.
  *
- * Publishes directly as a frozen snapshot:
- *   publication_status = 'published', overlays_frozen = TRUE
+ * Publishes directly as a historical source record:
+ *   publication_status = 'published'
  */
 import { NextRequest, NextResponse } from "next/server";
 import { dbEnabled } from "@/db/prisma";

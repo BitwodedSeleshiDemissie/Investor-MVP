@@ -49,3 +49,5 @@ playwright-report/
 .claude/
 
 /src/generated/prisma
+
+.vercel

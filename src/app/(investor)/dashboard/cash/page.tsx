@@ -1,58 +1,26 @@
 import { Wallet } from "lucide-react";
 import { getPortfolioSnapshot } from "@/server/queries/portfolio";
-import { getLatestManualRows } from "@/server/queries/admin";
-import { formatEur } from "@/lib/utils";
+import { formatDate, formatEur } from "@/lib/utils";
 
 export default async function CashPage() {
   const snap = await getPortfolioSnapshot();
   const { composition, directaCash, cutoffDate } = snap;
-  const hasFormulaCash = Boolean(snap.overlaySources?.cashFormula);
-
-  const frozenCashRows = snap.overlaysFrozen && !hasFormulaCash
-    ? (snap.overlaySources?.manualItems ?? [])
-        .filter((item) => item.item_type.toLowerCase() === "cash")
-        .map((item) => ({
-          label: item.item_key === "TRACKER_EXTERNAL_CASH_DIFFERENCE"
-            ? "Cash outside Directa"
-            : item.item_key.replace(/_/g, " "),
-          value: item.value,
-        }))
-    : null;
-
-  const liveCashRows = frozenCashRows ? [] : await getLatestManualRows("cash");
-  const externalCash = frozenCashRows
-    ? frozenCashRows.reduce((s, r) => s + r.value, 0)
-    : liveCashRows.reduce((s, r) => s + r.value, 0);
-
+  const positionsAsOf = snap.dataFreshness?.positionsAsOf ?? cutoffDate;
   const directa    = directaCash || 0;
-  const totalCash  = composition.cash || directa + externalCash;
+  const totalCash  = composition.cash || directa;
   const externalFromComposition = Math.max(0, totalCash - directa);
   const statementPct = totalCash > 0 ? Math.min(100, (directa / totalCash) * 100) : 0;
-  const externalDisplay = hasFormulaCash ? externalFromComposition : externalCash || externalFromComposition;
+  const externalDisplay = externalFromComposition;
   const externalPct = totalCash > 0 ? Math.min(100, (externalDisplay / totalCash) * 100) : 0;
 
   const rows: Array<{ label: string; value: number }> = [];
   if (directa > 0) {
-    rows.push({ label: "Statement Cash", value: directa });
+    rows.push({ label: "Brokerage Account Cash", value: directa });
   }
-  if (hasFormulaCash && externalDisplay > 0) {
+  if (externalDisplay > 0) {
     rows.push({
-      label: "Cash Outside Directa",
+      label: "Cash Outside Brokerage Account",
       value: externalDisplay,
-    });
-  } else if (frozenCashRows && frozenCashRows.length > 0) {
-    rows.push(...frozenCashRows);
-  } else if (liveCashRows.length > 0) {
-    liveCashRows.forEach((r) => {
-      rows.push({
-        label: r.holdingName ?? r.displayName,
-        value: r.value,
-      });
-    });
-  } else if (externalFromComposition > 0 && directa > 0) {
-    rows.push({
-      label: "External Cash",
-      value: externalFromComposition,
     });
   }
 
@@ -61,7 +29,7 @@ export default async function CashPage() {
       <div className="pt-1">
         <h1 className="text-xl font-bold text-foreground tracking-tight">Cash &amp; Liquidity</h1>
         <p className="text-sm text-muted-foreground mt-0.5">
-          Cash balances by account - {cutoffDate}
+          Cash balances by account as of {formatDate(positionsAsOf)}
         </p>
       </div>
 
@@ -85,7 +53,7 @@ export default async function CashPage() {
 
         <div className="sm:col-span-2 grid grid-cols-2 gap-4">
           <div className="rounded-2xl border border-border/60 p-5 bg-secondary/20">
-            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-3">Statement Cash</p>
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-3">Brokerage Account Cash</p>
             <p className="font-numeric text-3xl font-bold text-foreground leading-none">
               {formatEur(directa)}
             </p>
@@ -103,7 +71,7 @@ export default async function CashPage() {
           </div>
 
           <div className="rounded-2xl border border-border/60 p-5 bg-secondary/20">
-            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-3">External Cash &amp; Other</p>
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-3">Cash Outside Brokerage</p>
             <p className="font-numeric text-3xl font-bold text-foreground leading-none">
               {formatEur(externalDisplay)}
             </p>

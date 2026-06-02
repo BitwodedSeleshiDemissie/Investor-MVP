@@ -89,7 +89,8 @@ function parseAiSummary(summary: string): { bullets: string[]; verdict: string }
 
 export function DirectaUpload() {
   const router = useRouter();
-  const inputRef = useRef<HTMLInputElement>(null);
+  const csvInputRef = useRef<HTMLInputElement>(null);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
 
   const [selectedMonth, setSelectedMonth] = useState(currentYearMonth());
   const [files, setFiles] = useState<File[]>([]);
@@ -119,19 +120,42 @@ export function DirectaUpload() {
       .catch(() => setDefaultsStatus("error"));
   }, []);
 
-  function handleFiles(list: FileList | null) {
-    if (!list || list.length === 0) return;
-    const csvs = [...list].filter((f) => f.name.toLowerCase().endsWith(".csv"));
-    if (csvs.length === 0) {
-      setErrorMsg("Only Directa .csv files are accepted.");
-      setStatus("error");
-      return;
-    }
-    setFiles(csvs);
+  const csvFiles = files.filter((file) => file.name.toLowerCase().endsWith(".csv"));
+  const pdfFiles = files.filter((file) => file.name.toLowerCase().endsWith(".pdf"));
+
+  function updateFiles(nextFiles: File[]) {
+    setFiles(nextFiles);
     setStatus("idle");
     setErrorMsg("");
     setResult(null);
     setDuplicatePrompt(null);
+  }
+
+  function handleCsvFiles(list: FileList | null) {
+    if (!list || list.length === 0) return;
+    const csvs = [...list].filter((f) => f.name.toLowerCase().endsWith(".csv"));
+    if (csvs.length === 0) {
+      setErrorMsg("Only Directa CSV files are accepted in this section.");
+      setStatus("error");
+      return;
+    }
+    if (csvs.length !== list.length) {
+      setErrorMsg("Move the PDF to the Directa PDF section.");
+      setStatus("error");
+      return;
+    }
+    updateFiles([...pdfFiles, ...csvs]);
+  }
+
+  function handlePdfFiles(list: FileList | null) {
+    if (!list || list.length === 0) return;
+    const pdfs = [...list].filter((f) => f.name.toLowerCase().endsWith(".pdf"));
+    if (pdfs.length === 0 || pdfs.length !== list.length) {
+      setErrorMsg("Only the Directa Situazione Patrimoniale PDF is accepted in this section.");
+      setStatus("error");
+      return;
+    }
+    updateFiles([...csvFiles, pdfs[pdfs.length - 1]]);
   }
 
   function setItemValue(item_key: string, value: string) {
@@ -142,7 +166,7 @@ export function DirectaUpload() {
 
   async function checkDuplicates(): Promise<DuplicateFile[]> {
     const form = new FormData();
-    for (const file of files) form.append("files", file);
+    for (const file of csvFiles) form.append("files", file);
     const resp = await fetch("/api/admin/directa-duplicates", { method: "POST", body: form });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error ?? `HTTP ${resp.status}`);
@@ -150,7 +174,11 @@ export function DirectaUpload() {
   }
 
   async function handleProcess(options: { skipDuplicateCheck?: boolean } = {}) {
-    if (files.length === 0) return;
+    if (csvFiles.length === 0 || pdfFiles.length === 0) {
+      setErrorMsg("Upload both Directa CSV transaction files and the Directa PDF account snapshot.");
+      setStatus("error");
+      return;
+    }
     setStatus("uploading");
     setErrorMsg("");
     setResult(null);
@@ -178,7 +206,7 @@ export function DirectaUpload() {
     }
 
     const form = new FormData();
-    for (const file of files) form.append("files", file);
+    for (const file of [...csvFiles, ...pdfFiles]) form.append("files", file);
     form.append("cutoffDateOverride", monthToLastDay(selectedMonth));
     form.append(
       "manualInputs",
@@ -189,7 +217,7 @@ export function DirectaUpload() {
           display_name: item.display_name,
           subcategory: item.subcategory,
           value: Number(item.value) || 0,
-        }))
+        })).filter((item) => item.item_type.toLowerCase() !== "cash")
       )
     );
 
@@ -244,7 +272,6 @@ export function DirectaUpload() {
   }
 
   const nonListedItems = manualItems.filter((item) => item.item_type.toLowerCase() !== "cash");
-  const cashItems = manualItems.filter((item) => item.item_type.toLowerCase() === "cash");
   const participationItems = nonListedItems.filter(
     (item) => item.item_key.startsWith("TRACKER_PARTICIPATION_") || (item.subcategory ?? "").toLowerCase().includes("participation")
   );
@@ -299,32 +326,58 @@ export function DirectaUpload() {
         />
       </div>
 
-      <div
-        className="rounded-2xl border-2 border-dashed border-border/60 p-8 text-center transition-colors hover:border-primary/40 cursor-pointer"
-        style={{ background: "hsl(var(--card))" }}
-        onClick={() => inputRef.current?.click()}
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={(e) => {
-          e.preventDefault();
-          handleFiles(e.dataTransfer.files);
-        }}
-      >
-        <input
-          ref={inputRef}
-          type="file"
-          accept=".csv,text/csv"
-          multiple
-          className="hidden"
-          onChange={(e) => handleFiles(e.target.files)}
-        />
-        <Upload className="w-8 h-8 text-muted-foreground/50 mx-auto mb-3" />
-        <p className="text-sm font-semibold text-foreground">Drop Directa Estratto Conto CSVs here or click to browse</p>
-        <p className="text-xs text-muted-foreground mt-1">Monthly statement exports in the CEO tracker format</p>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div
+          className="rounded-2xl border-2 border-dashed border-border/60 p-6 text-center transition-colors hover:border-primary/40 cursor-pointer"
+          style={{ background: "hsl(var(--card))" }}
+          onClick={() => csvInputRef.current?.click()}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault();
+            handleCsvFiles(e.dataTransfer.files);
+          }}
+        >
+          <input
+            ref={csvInputRef}
+            type="file"
+            accept=".csv,text/csv"
+            multiple
+            className="hidden"
+            onChange={(e) => handleCsvFiles(e.target.files)}
+          />
+          <Upload className="w-7 h-7 text-muted-foreground/50 mx-auto mb-3" />
+          <p className="text-sm font-semibold text-foreground">Directa CSV exports</p>
+          <p className="text-xs text-muted-foreground mt-1">Transactions, income, and activity history</p>
+          <p className="mt-3 text-[11px] text-muted-foreground">{csvFiles.length} selected</p>
+        </div>
+
+        <div
+          className="rounded-2xl border-2 border-dashed border-border/60 p-6 text-center transition-colors hover:border-primary/40 cursor-pointer"
+          style={{ background: "hsl(var(--card))" }}
+          onClick={() => pdfInputRef.current?.click()}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault();
+            handlePdfFiles(e.dataTransfer.files);
+          }}
+        >
+          <input
+            ref={pdfInputRef}
+            type="file"
+            accept=".pdf,application/pdf"
+            className="hidden"
+            onChange={(e) => handlePdfFiles(e.target.files)}
+          />
+          <FileSpreadsheet className="w-7 h-7 text-muted-foreground/50 mx-auto mb-3" />
+          <p className="text-sm font-semibold text-foreground">Directa PDF snapshot</p>
+          <p className="text-xs text-muted-foreground mt-1">Liquidity, listed positions, market values, ISINs</p>
+          <p className="mt-3 text-[11px] text-muted-foreground">{pdfFiles.length > 0 ? pdfFiles[0].name : "Required"}</p>
+        </div>
       </div>
 
-      {files.length > 0 && (
+      {(csvFiles.length > 0 || pdfFiles.length > 0) && (
         <div className="rounded-xl border border-border/60 overflow-hidden" style={{ background: "hsl(var(--card))" }}>
-          {files.map((file) => (
+          {[...csvFiles, ...pdfFiles].map((file) => (
             <div key={`${file.name}-${file.size}`} className="flex items-center gap-3 px-4 py-3 border-b border-border/40 last:border-0">
               <FileSpreadsheet className="w-4 h-4 text-muted-foreground/60 shrink-0" />
               <span className="font-mono text-xs text-foreground flex-1 truncate">{file.name}</span>
@@ -429,32 +482,11 @@ export function DirectaUpload() {
             </>
           )}
 
-          {cashItems.length > 0 && (
-            <>
-              <div className="px-4 py-2 bg-secondary/20 border-t border-border/30">
-                <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">External cash</span>
-              </div>
-              {cashItems.map((item) => (
-                <div key={item.item_key} className="flex items-center gap-3 px-4 py-2.5 border-t border-border/30">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-medium text-foreground truncate">{item.display_name}</p>
-                    <p className="text-[10px] text-muted-foreground">{item.subcategory}</p>
-                  </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <span className="text-xs text-muted-foreground">EUR</span>
-                    <input
-                      type="number"
-                      min="0"
-                      step="1000"
-                      value={item.value}
-                      onChange={(e) => setItemValue(item.item_key, e.target.value)}
-                      className="w-32 rounded-lg border border-border/60 bg-background/60 px-2 py-1 text-xs font-numeric text-right text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
-                    />
-                  </div>
-                </div>
-              ))}
-            </>
-          )}
+          <div className="px-4 py-3 border-t border-border/30 bg-secondary/10">
+            <p className="text-[11px] text-muted-foreground">
+              Cash outside brokerage is calculated automatically from capital committed, brokerage account value, and non-listed investments.
+            </p>
+          </div>
         </div>
       )}
 
@@ -467,11 +499,11 @@ export function DirectaUpload() {
 
       <button
         onClick={() => handleProcess()}
-        disabled={files.length === 0 || status === "uploading" || defaultsStatus === "loading"}
+        disabled={csvFiles.length === 0 || pdfFiles.length === 0 || status === "uploading" || defaultsStatus === "loading"}
         className="w-full py-3 rounded-xl text-sm font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed"
         style={{
           background:
-            files.length > 0 && status !== "uploading" && defaultsStatus !== "loading"
+            csvFiles.length > 0 && pdfFiles.length > 0 && status !== "uploading" && defaultsStatus !== "loading"
               ? "hsl(var(--primary))"
               : undefined,
           color: "hsl(var(--primary-foreground))",
@@ -538,8 +570,8 @@ export function DirectaUpload() {
                   { label: "Total NAV", value: fmt(result.portfolioValue) },
                   { label: "Fund IRR", value: fmtPct(result.fundIrr) },
                   { label: "Listed holdings (Directa)", value: fmt(result.directaListed) },
-                  { label: "Cash (Directa)", value: fmt(result.directaCash) },
-                  { label: "Non-Directa / manual", value: fmt(result.nonDirectaTotal) },
+                  { label: "Brokerage account cash", value: fmt(result.directaCash) },
+                  { label: "Non-listed + cash outside brokerage", value: fmt(result.nonDirectaTotal) },
                 ].map(({ label, value }) => (
                   <div key={label} className="flex items-center justify-between gap-2">
                     <span className="text-xs text-muted-foreground">{label}</span>

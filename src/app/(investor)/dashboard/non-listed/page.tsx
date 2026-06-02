@@ -44,8 +44,9 @@ function bucketLabel(bucket: NonListedRow["bucket"]) {
 }
 
 function rowsFromApprovedSnapshot(snap: Awaited<ReturnType<typeof getPortfolioSnapshot>>): NonListedRow[] | null {
-  if (!snap.overlaysFrozen) return null;
-  return (snap.overlaySources?.manualItems ?? [])
+  const items = snap.overlaySources?.manualItems ?? [];
+  if (items.length === 0) return null;
+  return items
     .filter((item) => item.item_type.toLowerCase() !== "cash" && Number(item.value) > 0)
     .map((item) => ({
       key: item.item_key,

@@ -105,8 +105,12 @@ export interface OverlaySources {
   externalCash: number;
   overlayItemCount: number;
   investorProfileCount: number;
-  cashFormula?: CashFormulaBreakdown;
-  // Per-item breakdown frozen at upload time — absent on snapshots predating this field.
+  brokerageCashSource?: {
+    type: "directa_pdf" | "csv_inference" | "ceo_tracker" | "unknown";
+    fileName?: string | null;
+    statementDate?: string | null;
+  };
+  // Source-record item breakdown. Live dashboards may replace these values with current approved admin rows.
   manualItems?: Array<{
     item_key: string;
     item_type: string;
@@ -116,23 +120,6 @@ export interface OverlaySources {
     subcategory?: string | null;
   }>;
   source?: string;
-}
-
-export interface CashFormulaBreakdown {
-  source: string;
-  formula: string;
-  baseCutoffDate: string;
-  capitalCollected: number;
-  listedNetTradeCost: number;
-  income: number;
-  baseParticipationNetCost: number;
-  baseLoanNetPrincipal: number;
-  participationNetCost: number;
-  loanNetPrincipal: number;
-  operatingPnl: number;
-  postCutoffParticipationNetCost: number;
-  postCutoffLoanNetPrincipal: number;
-  cash: number;
 }
 
 export interface DataFreshness {
@@ -162,6 +149,8 @@ export interface PortfolioSnapshot {
   investorPerformance: InvestorPerf[];
   // Immutability metadata — present on all snapshots created after the freeze system was introduced.
   // Absence means legacy snapshot: use raw payload without live overlay re-reads.
+  sourceRecordReady?: boolean;
+  sourceRecordedAt?: string;
   overlaysFrozen?: boolean;
   frozenAt?: string;
   overlaySources?: OverlaySources;

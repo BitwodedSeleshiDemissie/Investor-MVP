@@ -71,6 +71,55 @@ model directa_csv_files {
   uploaded_at DateTime  @default(now()) @db.Timestamptz(6)
 }
 
+model directa_pdf_files {
+  id                   BigInt                 @id @default(autoincrement())
+  filename             String
+  file_hash            String                 @unique
+  statement_date       DateTime?              @db.Date
+  liquidity            Float
+  listed_total         Float
+  uploaded_by          String                 @default("admin")
+  uploaded_at          DateTime               @default(now()) @db.Timestamptz(6)
+  content              Bytes
+  directa_pdf_positions directa_pdf_positions[]
+
+  @@index([statement_date, uploaded_at], map: "idx_directa_pdf_files_statement_date")
+}
+
+model directa_pdf_positions {
+  id               BigInt            @id @default(autoincrement())
+  pdf_file_id      BigInt
+  row_number       Int
+  row_hash         String            @unique
+  statement_date   DateTime?         @db.Date
+  security_name    String
+  isin             String
+  quantity         Float
+  price            Float
+  market_value     Float
+  created_at       DateTime          @default(now()) @db.Timestamptz(6)
+  directa_pdf_files directa_pdf_files @relation(fields: [pdf_file_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([statement_date], map: "idx_directa_pdf_positions_statement_date")
+  @@index([isin], map: "idx_directa_pdf_positions_isin")
+  @@index([security_name], map: "idx_directa_pdf_positions_security")
+  @@index([pdf_file_id], map: "idx_directa_pdf_positions_file")
+}
+
+model security_master {
+  isin           String   @id
+  display_name   String
+  source         String   @default("Directa PDF")
+  first_seen_at  DateTime @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime @default(now()) @db.Timestamptz(6)
+  latest_price   Float?
+  latest_market_value Float?
+  latest_statement_date DateTime? @db.Date
+
+  @@index([display_name], map: "idx_security_master_display_name")
+  @@index([latest_statement_date], map: "idx_security_master_statement_date")
+}
+
 model directa_upload_batches {
   id                    BigInt                  @id @default(autoincrement())
   filename              String
@@ -206,7 +255,6 @@ model portfolio_snapshots {
   published_at                 DateTime?                      @db.Timestamptz(6)
   approved_by                  String?
   approval_note                String?
-  overlays_frozen              Boolean                        @default(false)
   audit_report                 Json                           @default("{}")
   deterministic_checks         Json                           @default("[]")
   ai_summary                   String                         @default("")

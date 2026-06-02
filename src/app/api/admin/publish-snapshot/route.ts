@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
   const prisma = getPrisma();
   const draft = await prisma.portfolio_snapshots.findUnique({
     where: { id: BigInt(snapshotId) },
-    select: { id: true, as_of_date: true, publication_status: true, payload: true, deterministic_checks: true },
+    select: { id: true, as_of_date: true, publication_status: true, source_file: true, payload: true, deterministic_checks: true },
   });
 
   if (!draft) {
@@ -44,9 +44,10 @@ export async function POST(req: NextRequest) {
   }
 
   const payload = draft.payload as unknown as PortfolioSnapshot;
-  if (!payload.overlaysFrozen) {
+  const sourceRecordReady = payload.sourceRecordReady ?? payload.overlaysFrozen ?? false;
+  if (!sourceRecordReady) {
     return NextResponse.json(
-      { error: "Snapshot is not ready to publish. Re-upload to generate a self-contained approved snapshot." },
+      { error: "Snapshot is not ready to publish. Re-upload to generate a Directa source record from the CSV and PDF files." },
       { status: 409 }
     );
   }
@@ -55,6 +56,23 @@ export async function POST(req: NextRequest) {
   const blockers = checks.filter((check) => check.severity === "blocker");
   if (blockers.length > 0) {
     return NextResponse.json({ error: "Draft has blocking checks and cannot be published.", blockers }, { status: 409 });
+  }
+  const sourceFile = draft.source_file ?? "";
+  const isDirectaUploadDraft = sourceFile.toLowerCase().includes(".csv") || sourceFile.toLowerCase().includes(".pdf");
+  if (
+    isDirectaUploadDraft &&
+    (!payload.overlaySources?.brokerageCashSource || payload.overlaySources.brokerageCashSource.type !== "directa_pdf")
+  ) {
+    return NextResponse.json(
+      { error: "This draft was created before Directa PDF validation. Re-upload the CSV exports together with the Directa PDF snapshot." },
+      { status: 409 }
+    );
+  }
+  if (!Number.isFinite(payload.directaCash) || payload.directaCash < 0 || payload.composition.cash < 0 || payload.kpis.totalPortfolioValue < 0) {
+    return NextResponse.json(
+      { error: "This draft contains invalid cash or NAV values. Re-upload with the Directa PDF snapshot." },
+      { status: 409 }
+    );
   }
 
   const approvalNote =

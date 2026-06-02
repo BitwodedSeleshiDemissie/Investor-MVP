@@ -3,7 +3,6 @@ export const dynamic = "force-dynamic";
 import {
   Activity,
   AlertTriangle,
-  CalendarClock,
   DollarSign,
   LayoutDashboard,
   PieChart,
@@ -55,14 +54,20 @@ function Section({
   );
 }
 
-export default async function DashboardPage() {
+type DashboardSearchParams = Promise<{ viewAs?: string }>;
+
+export default async function DashboardPage({ searchParams }: { searchParams?: DashboardSearchParams }) {
   const session = await getSession();
+  const params = searchParams ? await searchParams : {};
+  const adminViewAs = session?.role === "admin" && typeof params.viewAs === "string"
+    ? cleanDisplayName(params.viewAs)
+    : null;
 
   if (session?.role === "investor" && !session.investorName) {
     redirect("/login");
   }
 
-  const sessionInvestorName = cleanDisplayName(session?.investorName);
+  const sessionInvestorName = adminViewAs ?? cleanDisplayName(session?.investorName);
   const snap = await getPortfolioSnapshot(sessionInvestorName);
   const { kpis, irr, risk, allocation, composition, warnings } = snap;
   const performanceRows = snap.investorPerformance ?? [];
@@ -126,20 +131,15 @@ export default async function DashboardPage() {
     <div className="space-y-5 pb-10 animate-fade-in">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3 pt-1 pb-1">
         <div>
-          <h1 className="text-xl font-bold text-foreground tracking-tight">Portfolio Overview</h1>
+          {adminViewAs && (
+            <div className="mb-2 inline-flex rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-[11px] font-semibold text-primary">
+              Admin preview as {adminViewAs}
+            </div>
+          )}
           <p className="text-sm text-muted-foreground mt-0.5">
-            {snap.investorName}
+            <span className="text-xl font-bold text-foreground tracking-tight">{snap.investorName}</span>
             <span className="mx-1.5 text-border">/</span>
-            {snap.portfolioId}
-            <span className="mx-1.5 text-border">/</span>
-            As of <span className="text-foreground font-medium">{formatDate(snap.cutoffDate)}</span>
-          </p>
-          <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground/80">
-            <CalendarClock className="h-3.5 w-3.5 text-muted-foreground/60" />
-            <span>
-              Includes transactions through{" "}
-              <span className="font-medium text-foreground">{formatDate(transactionsThrough)}</span>
-            </span>
+            Includes transactions through <span className="text-foreground font-medium">{formatDate(transactionsThrough)}</span>
           </p>
         </div>
       </div>

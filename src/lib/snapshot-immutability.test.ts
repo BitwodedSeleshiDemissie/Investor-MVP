@@ -1,10 +1,10 @@
 /**
  * Snapshot immutability contract tests.
  *
- * 1. Editing admin_manual_values after publish does NOT change the investor dashboard.
- * 2. Editing investor_profiles after publish does NOT change published investor metrics.
+ * 1. The stored published snapshot remains the fallback source of truth.
+ * 2. Dashboard reads apply live approved admin/profile overlays without rewriting the stored snapshot.
  * 3. Submitting without manualInputs returns HTTP 400.
- * 4. A frozen draft can publish; an unfrozen draft returns HTTP 409.
+ * 4. A prepared source-record draft can publish; an unprepared draft returns HTTP 409.
  * 5. The confirmation popup numbers exactly match the payload that gets published.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -87,7 +87,7 @@ import { getSession } from "@/lib/auth";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function makeFrozenPayload(overrides: Partial<PortfolioSnapshot> = {}): PortfolioSnapshot {
+function makeSourceRecordPayload(overrides: Partial<PortfolioSnapshot> = {}): PortfolioSnapshot {
   return {
     kpis: {
       totalPortfolioValue: 2_000_000,
@@ -145,8 +145,8 @@ function makeFrozenPayload(overrides: Partial<PortfolioSnapshot> = {}): Portfoli
         irrAnnualized: 0.08,
       },
     ],
-    overlaysFrozen: true,
-    frozenAt: "2025-04-01T10:00:00Z",
+    sourceRecordReady: true,
+    sourceRecordedAt: "2025-04-01T10:00:00Z",
     overlaySources: {
       capitalCommitted: 1_800_000,
       nonListedValue: 200_000,
@@ -159,18 +159,18 @@ function makeFrozenPayload(overrides: Partial<PortfolioSnapshot> = {}): Portfoli
   };
 }
 
-// ─── Tests 1 & 2: frozen snapshot bypasses live DB tables ─────────────────────
+// ─── Tests 1 & 2: source record payload fallback + live dashboard overlay ─────────────
 
-describe("getPortfolioSnapshot — frozen path immutability", () => {
+describe("getPortfolioSnapshot — source record payload with live dashboard overlay", () => {
   beforeEach(() => {
     mockPrismaClient.$queryRaw.mockReset().mockResolvedValue([]);
     mockPrismaClient.investor_profiles.findMany.mockReset().mockResolvedValue([]);
     mockPrismaClient.admin_controls.findFirst.mockReset().mockResolvedValue(null);
   });
 
-  it("(1) returns the exact frozen composition without re-reading admin_manual_values", async () => {
-    const frozen = makeFrozenPayload();
-    mockPrismaClient.$queryRaw.mockResolvedValueOnce([{ as_of_date: "2025-03-31", payload: frozen }]);
+  it("(1) returns the source-record composition when no live admin overlay exists", async () => {
+    const sourceRecord = makeSourceRecordPayload();
+    mockPrismaClient.$queryRaw.mockResolvedValueOnce([{ as_of_date: "2025-03-31", payload: sourceRecord }]);
 
     const result = await getPortfolioSnapshot();
 
@@ -180,12 +180,12 @@ describe("getPortfolioSnapshot — frozen path immutability", () => {
 
     const sqlCalls = mockPrismaClient.$queryRaw.mock.calls.map((args) => String(args[0]));
     const liveAdminReads = sqlCalls.filter((sql) => sql.includes("admin_manual_values"));
-    expect(liveAdminReads).toHaveLength(0);
+    expect(liveAdminReads.length).toBeGreaterThan(0);
   });
 
-  it("(2) returns frozen investor performance without re-reading investor_profiles", async () => {
-    const frozen = makeFrozenPayload();
-    mockPrismaClient.$queryRaw.mockResolvedValueOnce([{ as_of_date: "2025-03-31", payload: frozen }]);
+  it("(2) falls back to source-record investor performance when no live profiles exist", async () => {
+    const sourceRecord = makeSourceRecordPayload();
+    mockPrismaClient.$queryRaw.mockResolvedValueOnce([{ as_of_date: "2025-03-31", payload: sourceRecord }]);
 
     const result = await getPortfolioSnapshot();
 
@@ -193,16 +193,16 @@ describe("getPortfolioSnapshot — frozen path immutability", () => {
     expect(result.investorPerformance[0].name).toBe("Alice");
     expect(result.investorPerformance[0].currentValueEur).toBe(550_000);
 
-    expect(mockPrismaClient.investor_profiles.findMany).not.toHaveBeenCalled();
+    expect(mockPrismaClient.investor_profiles.findMany).toHaveBeenCalled();
   });
 
-  it("unfrozen (legacy) snapshot does query investor_profiles", async () => {
-    const unfrozen = makeFrozenPayload({
-      overlaysFrozen: false,
-      frozenAt: undefined,
+  it("unprepared (legacy) snapshot does query investor_profiles", async () => {
+    const unprepared = makeSourceRecordPayload({
+      sourceRecordReady: false,
+      sourceRecordedAt: undefined,
       investorPerformance: [],
     });
-    mockPrismaClient.$queryRaw.mockResolvedValueOnce([{ as_of_date: "2025-03-31", payload: unfrozen }]);
+    mockPrismaClient.$queryRaw.mockResolvedValueOnce([{ as_of_date: "2025-03-31", payload: unprepared }]);
     mockPrismaClient.investor_profiles.findMany.mockResolvedValueOnce([]);
 
     await getPortfolioSnapshot();
@@ -265,9 +265,9 @@ describe("upload-snapshot route — manualInputs validation", () => {
   });
 });
 
-// ─── Test 4: publish route enforces overlaysFrozen ───────────────────────────
+// ─── Test 4: publish route enforces sourceRecordReady ───────────────────────────
 
-describe("publish-snapshot route — overlaysFrozen gate", () => {
+describe("publish-snapshot route — sourceRecordReady gate", () => {
   beforeEach(() => {
     mockPrismaClient.$queryRaw.mockReset().mockResolvedValue([]);
     mockPrismaClient.portfolio_snapshots.findUnique.mockReset().mockResolvedValue(null);
@@ -277,13 +277,13 @@ describe("publish-snapshot route — overlaysFrozen gate", () => {
     );
   });
 
-  it("(4a) returns 409 when payload.overlaysFrozen is false", async () => {
-    const unfrozenPayload = makeFrozenPayload({ overlaysFrozen: false });
+  it("(4a) returns 409 when payload.sourceRecordReady is false", async () => {
+    const unpreparedPayload = makeSourceRecordPayload({ sourceRecordReady: false });
     mockPrismaClient.portfolio_snapshots.findUnique.mockResolvedValueOnce({
       id: BigInt(42),
       as_of_date: new Date("2025-03-31"),
       publication_status: "draft",
-      payload: unfrozenPayload,
+      payload: unpreparedPayload,
       deterministic_checks: [],
     });
 
@@ -300,13 +300,13 @@ describe("publish-snapshot route — overlaysFrozen gate", () => {
     expect(json.error).toMatch(/not ready to publish/i);
   });
 
-  it("(4b) publishes successfully when payload.overlaysFrozen is true", async () => {
-    const frozenPayload = makeFrozenPayload({ overlaysFrozen: true });
+  it("(4b) publishes successfully when payload.sourceRecordReady is true", async () => {
+    const sourceRecordPayload = makeSourceRecordPayload({ sourceRecordReady: true });
     mockPrismaClient.portfolio_snapshots.findUnique.mockResolvedValueOnce({
       id: BigInt(42),
       as_of_date: new Date("2025-03-31"),
       publication_status: "draft",
-      payload: frozenPayload,
+      payload: sourceRecordPayload,
       deterministic_checks: [],
     });
 
@@ -324,13 +324,14 @@ describe("publish-snapshot route — overlaysFrozen gate", () => {
     expect(json.snapshotId).toBe(42);
   });
 
-  it("returns 409 when a blocker check exists (even if frozen)", async () => {
-    const frozenPayload = makeFrozenPayload({ overlaysFrozen: true });
+  it("returns 409 when a blocker check exists (even if source-record)", async () => {
+    const sourceRecordPayload = makeSourceRecordPayload({ sourceRecordReady: true });
     mockPrismaClient.portfolio_snapshots.findUnique.mockResolvedValueOnce({
       id: BigInt(99),
       as_of_date: new Date("2025-03-31"),
       publication_status: "draft",
-      payload: frozenPayload,
+      source_file: "Ec31_03_2025.csv, SituazionePatrimoniale_B6166_31032025.pdf",
+      payload: sourceRecordPayload,
       deterministic_checks: [
         { severity: "blocker", title: "Missing Directa positions file", detail: "..." },
       ],
@@ -345,11 +346,45 @@ describe("publish-snapshot route — overlaysFrozen gate", () => {
     const response = await publishPost(req as Parameters<typeof publishPost>[0]);
     expect(response.status).toBe(409);
   });
+
+  it("returns 409 for CSV-only Directa drafts that predate PDF validation", async () => {
+    const sourceRecordPayload = makeSourceRecordPayload({
+      sourceRecordReady: true,
+      overlaySources: {
+        capitalCommitted: 1_800_000,
+        nonListedValue: 200_000,
+        externalCash: 0,
+        overlayItemCount: 1,
+        investorProfileCount: 1,
+        manualItems: [{ item_key: "PRIVATE_EQUITY", item_type: "non_listed", value: 200_000 }],
+      },
+    });
+    mockPrismaClient.portfolio_snapshots.findUnique.mockResolvedValueOnce({
+      id: BigInt(100),
+      as_of_date: new Date("2025-03-31"),
+      publication_status: "draft",
+      source_file: "Ec31_03_2025.csv",
+      payload: sourceRecordPayload,
+      deterministic_checks: [],
+    });
+
+    const req = new Request("http://localhost/api/admin/publish-snapshot", {
+      method: "POST",
+      body: JSON.stringify({ snapshotId: 100 }),
+      headers: { "content-type": "application/json" },
+    });
+
+    const response = await publishPost(req as Parameters<typeof publishPost>[0]);
+    const json = (await response.json()) as { error: string };
+
+    expect(response.status).toBe(409);
+    expect(json.error).toMatch(/Directa PDF validation/i);
+  });
 });
 
-// ─── Test 5: confirmation popup numbers == frozen payload fields ──────────────
+// ─── Test 5: confirmation popup numbers == source record payload fields ──────────────
 
-describe("(5) confirmation popup numbers exactly match the frozen payload", () => {
+describe("(5) confirmation popup numbers exactly match the source record payload", () => {
   /**
    * The upload route returns 5 numbers in JSON and freezes the same values into the payload:
    *   portfolioValue  ← payload.kpis.totalPortfolioValue
@@ -361,8 +396,8 @@ describe("(5) confirmation popup numbers exactly match the frozen payload", () =
    * These tests verify that projection and storage are identical — no divergence.
    */
 
-  it("response projection fields match the frozen payload fields", () => {
-    const payload = makeFrozenPayload();
+  it("response projection fields match the source record payload fields", () => {
+    const payload = makeSourceRecordPayload();
 
     // Mirror exactly what the upload route returns in its JSON response.
     const responseProjection = {
@@ -384,7 +419,7 @@ describe("(5) confirmation popup numbers exactly match the frozen payload", () =
     );
   });
 
-  it("frozen manualItems sum equals nonDirectaTotal reported to UI", () => {
+  it("source-record manualItems sum equals nonDirectaTotal reported to UI", () => {
     const items = [
       { item_key: "PE_FUND", item_type: "non_listed", value: 300_000 },
       { item_key: "EXT_CASH", item_type: "cash", value: 75_000 },
@@ -396,7 +431,7 @@ describe("(5) confirmation popup numbers exactly match the frozen payload", () =
       .filter((i) => i.item_type === "cash")
       .reduce((s, i) => s + i.value, 0);
 
-    const payload = makeFrozenPayload({
+    const payload = makeSourceRecordPayload({
       overlaySources: {
         capitalCommitted: 1_800_000,
         nonListedValue,
@@ -408,14 +443,14 @@ describe("(5) confirmation popup numbers exactly match the frozen payload", () =
     });
 
     const nonDirectaTotal = nonListedValue + externalCash;
-    const frozenItemsTotal = payload.overlaySources!.manualItems!.reduce((s, i) => s + i.value, 0);
+    const sourceRecordItemsTotal = payload.overlaySources!.manualItems!.reduce((s, i) => s + i.value, 0);
 
     expect(nonDirectaTotal).toBe(375_000);
-    expect(frozenItemsTotal).toBe(nonDirectaTotal);
+    expect(sourceRecordItemsTotal).toBe(nonDirectaTotal);
   });
 
   it("composition.total is listed + nonListed + cash and matches totalPortfolioValue", () => {
-    const payload = makeFrozenPayload();
+    const payload = makeSourceRecordPayload();
     const { listed, nonListed, cash, total } = payload.composition;
 
     expect(total).toBe(listed + nonListed + cash);

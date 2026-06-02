@@ -38,7 +38,6 @@ export function buildDeterministicChecks(args: {
   externalCash: number;
 }): ReviewCheck[] {
   const statementFiles = args.used.filter((file) => file.statementRows > 0);
-  const positionFiles = args.used.filter((file) => file.positionRows > 0);
   const checks: ReviewCheck[] = [];
 
   checks.push(
@@ -55,18 +54,19 @@ export function buildDeterministicChecks(args: {
         }
   );
 
-  if (positionFiles.length > 0) {
+  if (args.payload.overlaySources?.brokerageCashSource?.type === "directa_pdf") {
     checks.push({
       severity: "ok",
-      title: "Directa positions detected",
-      detail: `${positionFiles.length} positions file(s) in the Directa history provide final quantities and official EUR market values.`,
-    });
-  } else if (statementFiles.length > 0) {
-    checks.push({
-      severity: "ok",
-      title: "CEO tracker valuation mode",
+      title: "Directa PDF snapshot applied",
       detail:
-        "No separate positions file is required. Listed holdings are rebuilt from the Estratto Conto trade history and valued from the latest statement trade prices, matching the CEO workbook workflow.",
+        "Current holdings, listed market value, ISINs, and brokerage account cash come from the Directa PDF snapshot.",
+    });
+  } else {
+    checks.push({
+      severity: "blocker",
+      title: "Missing Directa PDF snapshot",
+      detail:
+        "Upload the Directa Situazione Patrimoniale PDF. CSV exports are for transaction history and cannot be the source of current holdings, ISINs, listed value, or brokerage cash.",
     });
   }
 
@@ -91,8 +91,8 @@ export function buildDeterministicChecks(args: {
   if (args.externalCash > 0) {
     checks.push({
       severity: "ok",
-      title: "Non-Directa cash overlay applied",
-      detail: `Outside-Directa cash overlay is ${formatMoney(args.externalCash)} and is separate from Directa statement cash.`,
+      title: "Cash outside brokerage calculated",
+      detail: `Cash outside brokerage is ${formatMoney(args.externalCash)}, calculated as capital committed less listed value, brokerage cash, and non-listed investments.`,
     });
   }
 

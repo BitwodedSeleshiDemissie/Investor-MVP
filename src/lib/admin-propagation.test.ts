@@ -5,7 +5,7 @@
  *   admin_manual_values → getFixedPortfolioValues (admin pages)
  *                       → manual-defaults API (pre-fills upload UI)
  *                       → manualInputs categorization (upload route)
- *                       → frozen snapshot payload (per-investor)
+ *                       → source record payload (per-investor)
  *                       → getPortfolioSnapshot (every investor)
  *
  * All tests run against mock DB — zero production data touched.
@@ -80,18 +80,18 @@ import { getPortfolioSnapshot } from "../server/queries/portfolio";
 import { GET as manualDefaultsGet } from "../app/api/admin/manual-defaults/route";
 import { getSession } from "@/lib/auth";
 
-// ─── Shared frozen payload ─────────────────────────────────────────────────────
+// ─── Shared source record payload ─────────────────────────────────────────────────────
 // Alice: 500 units, 2 000 000 current value
 // Bob:   250 units, 1 000 000 current value
 // Total: 750 units, 3 000 000 (NAV/unit = 4 000)
 // non-listed: PRIVATE_PARTICIPATIONS 300k + PRIVATE_LOAN_PRINCIPAL 200k = 500k
 // cash:       directaCash 250k + CASH_OUTSIDE_DIRECTA 50k = 300k
 
-function makeFrozenPayload(overrides: Partial<PortfolioSnapshot> = {}): PortfolioSnapshot {
+function makeSourceRecordPayload(overrides: Partial<PortfolioSnapshot> = {}): PortfolioSnapshot {
   return {
     kpis: {
       totalPortfolioValue: 3_000_000,
-      capitalCommitted: 0,
+      capitalCommitted: 1_500_000,
       pctSinceEntry: 0,
       moic: 1.0,
       moicTarget: 2.0,
@@ -157,10 +157,10 @@ function makeFrozenPayload(overrides: Partial<PortfolioSnapshot> = {}): Portfoli
         irrAnnualized: 1.0,
       },
     ],
-    overlaysFrozen: true,
-    frozenAt: "2026-01-01T00:00:00Z",
+    sourceRecordReady: true,
+    sourceRecordedAt: "2026-01-01T00:00:00Z",
     overlaySources: {
-      capitalCommitted: 0,
+      capitalCommitted: 1_500_000,
       nonListedValue: 500_000,
       externalCash: 50_000,
       overlayItemCount: 3,
@@ -183,7 +183,7 @@ describe("getFixedPortfolioValues — reads admin-entered values", () => {
     mockPrismaClient.admin_controls.findFirst.mockReset().mockResolvedValue(null);
   });
 
-  it("returns latest per-key values for all three fixed keys", async () => {
+  it("calculates cash outside brokerage from capital, brokerage value, and non-listed values", async () => {
     // Promise.all fires three $queryRaw calls concurrently; resolve each in order.
     mockPrismaClient.$queryRaw
       .mockResolvedValueOnce([                                      // latest per key
@@ -192,29 +192,36 @@ describe("getFixedPortfolioValues — reads admin-entered values", () => {
         { item_key: "CASH_OUTSIDE_DIRECTA",   value: "75000"  },
       ])
       .mockResolvedValueOnce([])                                    // history rows
-      .mockResolvedValueOnce([{ direct_cash: "250000" }]);          // statement cash
+      .mockResolvedValueOnce([{
+        direct_cash: "250000",
+        payload: makeSourceRecordPayload({ composition: { listed: 100_000, nonListed: 550_000, cash: 350_000, total: 1_000_000 } }),
+      }])
+      .mockResolvedValueOnce([{ capital_committed: "1000000" }]);   // active investor capital
 
     const result = await getFixedPortfolioValues();
 
     expect(result.privateParticipations).toBe(400_000);
     expect(result.privateLoanPrincipal).toBe(150_000);
-    expect(result.cashOutsideDirecta).toBe(75_000);
+    expect(result.cashOutsideDirecta).toBe(100_000);
+    expect(result.cashOutsideDirectaSource).toBe("calculated");
     expect(result.statementCash).toBe(250_000);
   });
 
-  it("falls back to frozen snapshot cash when no live cash row exists", async () => {
+  it("falls back to source record cash when no live cash row exists", async () => {
+    const source = makeSourceRecordPayload();
+    source.kpis.capitalCommitted = 0;
     mockPrismaClient.$queryRaw
       .mockResolvedValueOnce([
         { item_key: "PRIVATE_PARTICIPATIONS", value: "400000" },
         { item_key: "PRIVATE_LOAN_PRINCIPAL",  value: "150000" },
       ])
       .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([{ direct_cash: "250000", payload: makeFrozenPayload() }]);
+      .mockResolvedValueOnce([{ direct_cash: "250000", payload: source }]);
 
     const result = await getFixedPortfolioValues();
 
     expect(result.cashOutsideDirecta).toBe(50_000);
-    expect(result.cashOutsideDirectaSource).toBe("snapshot");
+    expect(result.cashOutsideDirectaSource).toBe("source_record");
     expect(result.statementCash).toBe(250_000);
   });
 
@@ -312,9 +319,9 @@ describe("manualInputs categorization — non-listed vs cash split", () => {
   });
 });
 
-// ─── 3. Per-investor personalization from frozen payload ──────────────────────
+// ─── 3. Per-investor personalization from source record payload ──────────────────────
 
-describe("getPortfolioSnapshot — per-investor slice from frozen payload", () => {
+describe("getPortfolioSnapshot — per-investor slice from source record payload", () => {
   beforeEach(() => {
     mockPrismaClient.$queryRaw.mockReset().mockResolvedValue([]);
     mockPrismaClient.investor_profiles.findMany.mockReset().mockResolvedValue([]);
@@ -322,7 +329,7 @@ describe("getPortfolioSnapshot — per-investor slice from frozen payload", () =
   });
 
   it("Alice gets her 2 000 000 slice (2/3 of fund)", async () => {
-    mockPrismaClient.$queryRaw.mockResolvedValueOnce([{ as_of_date: "2025-12-31", payload: makeFrozenPayload() }]);
+    mockPrismaClient.$queryRaw.mockResolvedValueOnce([{ as_of_date: "2025-12-31", payload: makeSourceRecordPayload() }]);
 
     const result = await getPortfolioSnapshot("Alice");
 
@@ -335,7 +342,7 @@ describe("getPortfolioSnapshot — per-investor slice from frozen payload", () =
   });
 
   it("Bob gets his 1 000 000 slice (1/3 of fund)", async () => {
-    mockPrismaClient.$queryRaw.mockResolvedValueOnce([{ as_of_date: "2025-12-31", payload: makeFrozenPayload() }]);
+    mockPrismaClient.$queryRaw.mockResolvedValueOnce([{ as_of_date: "2025-12-31", payload: makeSourceRecordPayload() }]);
 
     const result = await getPortfolioSnapshot("Bob");
 
@@ -347,8 +354,8 @@ describe("getPortfolioSnapshot — per-investor slice from frozen payload", () =
 
   it("sum of all investor slices equals the fund total", async () => {
     mockPrismaClient.$queryRaw
-      .mockResolvedValueOnce([{ as_of_date: "2025-12-31", payload: makeFrozenPayload() }])
-      .mockResolvedValueOnce([{ as_of_date: "2025-12-31", payload: makeFrozenPayload() }]);
+      .mockResolvedValueOnce([{ as_of_date: "2025-12-31", payload: makeSourceRecordPayload() }])
+      .mockResolvedValueOnce([{ as_of_date: "2025-12-31", payload: makeSourceRecordPayload() }]);
 
     const [alice, bob] = await Promise.all([
       getPortfolioSnapshot("Alice"),
@@ -360,7 +367,7 @@ describe("getPortfolioSnapshot — per-investor slice from frozen payload", () =
   });
 
   it("fund-level view (no name) returns the full 3 000 000", async () => {
-    mockPrismaClient.$queryRaw.mockResolvedValueOnce([{ as_of_date: "2025-12-31", payload: makeFrozenPayload() }]);
+    mockPrismaClient.$queryRaw.mockResolvedValueOnce([{ as_of_date: "2025-12-31", payload: makeSourceRecordPayload() }]);
 
     const result = await getPortfolioSnapshot();
 
@@ -370,7 +377,7 @@ describe("getPortfolioSnapshot — per-investor slice from frozen payload", () =
   });
 
   it("composition values are shared by all investors (non-listed and cash unchanged per-investor)", async () => {
-    mockPrismaClient.$queryRaw.mockResolvedValueOnce([{ as_of_date: "2025-12-31", payload: makeFrozenPayload() }]);
+    mockPrismaClient.$queryRaw.mockResolvedValueOnce([{ as_of_date: "2025-12-31", payload: makeSourceRecordPayload() }]);
 
     const result = await getPortfolioSnapshot("Alice");
 
@@ -382,49 +389,148 @@ describe("getPortfolioSnapshot — per-investor slice from frozen payload", () =
   });
 });
 
-// ─── 4. Frozen snapshot protects investors from post-publish admin changes ─────
+// ─── 4. Dashboard read overlays live approved admin/profile changes ────────────
 
-describe("frozen snapshot — immutability after publish", () => {
+describe("source record — live dashboard overlay after publish", () => {
   beforeEach(() => {
     mockPrismaClient.$queryRaw.mockReset().mockResolvedValue([]);
     mockPrismaClient.investor_profiles.findMany.mockReset().mockResolvedValue([]);
     mockPrismaClient.admin_controls.findFirst.mockReset().mockResolvedValue(null);
   });
 
-  it("admin_manual_values is never queried for a frozen snapshot", async () => {
-    mockPrismaClient.$queryRaw.mockResolvedValueOnce([{ as_of_date: "2025-12-31", payload: makeFrozenPayload() }]);
+  it("admin_manual_values is queried so admin and investor cash stay aligned", async () => {
+    mockPrismaClient.$queryRaw.mockResolvedValueOnce([{ as_of_date: "2025-12-31", payload: makeSourceRecordPayload() }]);
 
     await getPortfolioSnapshot("Alice");
 
     const sqls = mockPrismaClient.$queryRaw.mock.calls.map((args) => String(args[0]));
-    expect(sqls.some((sql) => sql.includes("admin_manual_values"))).toBe(false);
+    expect(sqls.some((sql) => sql.includes("admin_manual_values"))).toBe(true);
   });
 
-  it("investor_profiles is never queried for a frozen snapshot", async () => {
-    mockPrismaClient.$queryRaw.mockResolvedValueOnce([{ as_of_date: "2025-12-31", payload: makeFrozenPayload() }]);
+  it("investor_profiles is queried so new subscriptions affect dashboard cash", async () => {
+    mockPrismaClient.$queryRaw.mockResolvedValueOnce([{ as_of_date: "2025-12-31", payload: makeSourceRecordPayload() }]);
 
     await getPortfolioSnapshot("Bob");
 
-    expect(mockPrismaClient.investor_profiles.findMany).not.toHaveBeenCalled();
+    expect(mockPrismaClient.investor_profiles.findMany).toHaveBeenCalled();
   });
 
-  it("non-listed value is the frozen 500k even if admin_manual_values would have 0", async () => {
+  it("preserves matching source-record investor values", async () => {
+    mockPrismaClient.$queryRaw.mockResolvedValueOnce([{ as_of_date: "2025-12-31", payload: makeSourceRecordPayload() }]);
+    mockPrismaClient.investor_profiles.findMany.mockResolvedValueOnce([
+      {
+        name: "Alice",
+        investor_type: "Individual",
+        capital_eur: 1_000_000,
+        units: 500,
+        subscription_date: new Date("2024-01-01"),
+        nav_unit_at_sub: 2_000,
+      },
+      {
+        name: "Bob",
+        investor_type: "Individual",
+        capital_eur: 500_000,
+        units: 250,
+        subscription_date: new Date("2025-01-01"),
+        nav_unit_at_sub: 2_000,
+      },
+    ]);
+
+    const result = await getPortfolioSnapshot();
+
+    expect(result.kpis.capitalCommitted).toBe(1_500_000);
+    expect(result.directaCash).toBe(250_000);
+    expect(result.composition.cash).toBe(300_000);
+    expect(result.composition.total).toBe(3_000_000);
+    expect(result.investorPerformance).toHaveLength(2);
+    expect(result.investorPerformance.find((row) => row.name === "Alice")?.currentValueEur).toBe(2_000_000);
+  });
+
+  it("post-cutoff subscriptions increase client-visible cash without rewriting source investors", async () => {
+    mockPrismaClient.$queryRaw.mockResolvedValueOnce([{ as_of_date: "2025-12-31", payload: makeSourceRecordPayload() }]);
+    mockPrismaClient.investor_profiles.findMany.mockResolvedValueOnce([
+      {
+        name: "Alice",
+        investor_type: "Individual",
+        capital_eur: 1_000_000,
+        units: 500,
+        subscription_date: new Date("2024-01-01"),
+        nav_unit_at_sub: 2_000,
+      },
+      {
+        name: "Bob",
+        investor_type: "Individual",
+        capital_eur: 500_000,
+        units: 250,
+        subscription_date: new Date("2025-01-01"),
+        nav_unit_at_sub: 2_000,
+      },
+      {
+        name: "Charlie",
+        investor_type: "Individual",
+        capital_eur: 500_000,
+        units: 125,
+        subscription_date: new Date("2026-01-15"),
+        nav_unit_at_sub: 4_000,
+      },
+    ]);
+
+    const result = await getPortfolioSnapshot();
+
+    expect(result.kpis.capitalCommitted).toBe(2_000_000);
+    expect(result.composition.cash).toBe(800_000);
+    expect(result.composition.total).toBe(3_500_000);
+    expect(result.investorPerformance.find((row) => row.name === "Alice")?.currentValueEur).toBe(2_000_000);
+    expect(result.investorPerformance.find((row) => row.name === "Charlie")?.currentValueEur).toBe(500_000);
+  });
+
+  it("dated profile changes at or before the valuation date supersede source-record investor valuation", async () => {
+    mockPrismaClient.$queryRaw.mockResolvedValueOnce([{ as_of_date: "2025-12-31", payload: makeSourceRecordPayload() }]);
+    mockPrismaClient.investor_profiles.findMany.mockResolvedValueOnce([
+      {
+        name: "Alice",
+        investor_type: "Individual",
+        capital_eur: 1_500_000,
+        units: 1_000,
+        subscription_date: new Date("2024-01-01"),
+        nav_unit_at_sub: 1_500,
+      },
+      {
+        name: "Bob",
+        investor_type: "Individual",
+        capital_eur: 1_500_000,
+        units: 250,
+        subscription_date: new Date("2025-01-01"),
+        nav_unit_at_sub: 2_000,
+      },
+    ]);
+
+    const result = await getPortfolioSnapshot();
+
+    expect(result.kpis.capitalCommitted).toBe(3_000_000);
+    expect(result.composition.cash).toBe(300_000);
+    expect(result.investorPerformance).toHaveLength(2);
+    expect(result.investorPerformance.find((row) => row.name === "Alice")?.currentValueEur).toBe(2_400_000);
+    expect(result.investorPerformance.find((row) => row.name === "Bob")?.currentValueEur).toBe(600_000);
+  });
+
+  it("non-listed value is the source-record 500k even if admin_manual_values would have 0", async () => {
     // Simulate: admin deleted the entry after publish — no rows would come back
-    // from admin_manual_values. Frozen snapshot must still show 500k.
-    mockPrismaClient.$queryRaw.mockResolvedValueOnce([{ as_of_date: "2025-12-31", payload: makeFrozenPayload() }]);
+    // from admin_manual_values. source record must still show 500k.
+    mockPrismaClient.$queryRaw.mockResolvedValueOnce([{ as_of_date: "2025-12-31", payload: makeSourceRecordPayload() }]);
 
     const result = await getPortfolioSnapshot();
 
     expect(result.composition.nonListed).toBe(500_000);
   });
 
-  it("unfrozen (legacy) snapshot does query investor_profiles", async () => {
-    const unfrozen = makeFrozenPayload({
-      overlaysFrozen: false,
-      frozenAt: undefined,
+  it("unprepared (legacy) snapshot does query investor_profiles", async () => {
+    const unprepared = makeSourceRecordPayload({
+      sourceRecordReady: false,
+      sourceRecordedAt: undefined,
       investorPerformance: [],
     });
-    mockPrismaClient.$queryRaw.mockResolvedValueOnce([{ as_of_date: "2025-03-31", payload: unfrozen }]);
+    mockPrismaClient.$queryRaw.mockResolvedValueOnce([{ as_of_date: "2025-03-31", payload: unprepared }]);
     mockPrismaClient.investor_profiles.findMany.mockResolvedValueOnce([]);
 
     await getPortfolioSnapshot();
@@ -443,7 +549,7 @@ describe("manual-defaults API — pre-fills upload UI with latest admin values",
     );
   });
 
-  it("returns all three fixed keys with their latest values populated", async () => {
+  it("returns non-listed fixed keys with their latest values populated", async () => {
     mockPrismaClient.$queryRaw.mockResolvedValueOnce([
       {
         item_key: "PRIVATE_PARTICIPATIONS",
@@ -461,14 +567,6 @@ describe("manual-defaults API — pre-fills upload UI with latest admin values",
         latest_value: "150000",
         latest_date: "2025-12-31",
       },
-      {
-        item_key: "CASH_OUTSIDE_DIRECTA",
-        display_name: "Cash Outside Directa",
-        item_type: "Cash",
-        subcategory: "External Cash",
-        latest_value: "75000",
-        latest_date: "2025-12-31",
-      },
     ]);
 
     const response = await manualDefaultsGet();
@@ -477,7 +575,7 @@ describe("manual-defaults API — pre-fills upload UI with latest admin values",
     };
 
     expect(response.status).toBe(200);
-    expect(body.items).toHaveLength(3);
+    expect(body.items).toHaveLength(2);
 
     const part = body.items.find((i) => i.item_key === "PRIVATE_PARTICIPATIONS")!;
     expect(part.latest_value).toBe("400000");
@@ -486,9 +584,7 @@ describe("manual-defaults API — pre-fills upload UI with latest admin values",
     const loan = body.items.find((i) => i.item_key === "PRIVATE_LOAN_PRINCIPAL")!;
     expect(loan.latest_value).toBe("150000");
 
-    const cash = body.items.find((i) => i.item_key === "CASH_OUTSIDE_DIRECTA")!;
-    expect(cash.latest_value).toBe("75000");
-    expect(cash.item_type).toBe("Cash");
+    expect(body.items.find((i) => i.item_type === "Cash")).toBeUndefined();
   });
 
   it("returns null latest_value when admin has not entered any values yet", async () => {

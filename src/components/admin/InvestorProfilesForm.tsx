@@ -25,22 +25,69 @@ type FormValues = z.infer<typeof schema>;
 
 interface Props {
   profiles: InvestorProfile[];
+  currentNavUnit: number;
 }
 
-export function InvestorProfilesForm({ profiles }: Props) {
+export function InvestorProfilesForm({ profiles, currentNavUnit }: Props) {
   const router = useRouter();
   const [formStatus, setFormStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [formError, setFormError] = useState("");
   const [deletingName, setDeletingName] = useState<string | null>(null);
+  const [calculationMode, setCalculationMode] = useState<"unitsFromNav" | "navFromUnits">("unitsFromNav");
+  const defaultNavUnit = Number.isFinite(currentNavUnit) && currentNavUnit > 0 ? currentNavUnit : 1;
 
   const {
     register,
     handleSubmit,
     reset,
+    getValues,
+    setValue,
     formState: { errors },
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { investorType: "Individual", navUnitAtSub: 1.0 },
+    defaultValues: { investorType: "Individual", navUnitAtSub: defaultNavUnit },
+  });
+
+  function inputNumber(value: unknown): number | null {
+    const parsed = typeof value === "number" ? value : Number(String(value ?? ""));
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function round(value: number): number {
+    return Math.round(value * 1_000_000) / 1_000_000;
+  }
+
+  function recalculateUnits(capital: number | null, navUnit: number | null): void {
+    if (capital === null || navUnit === null || navUnit <= 0) return;
+    setValue("units", round(capital / navUnit), { shouldDirty: true, shouldValidate: true });
+  }
+
+  function recalculateNavUnit(capital: number | null, units: number | null): void {
+    if (capital === null || units === null || units <= 0) return;
+    setValue("navUnitAtSub", round(capital / units), { shouldDirty: true, shouldValidate: true });
+  }
+
+  const capitalField = register("capitalEur", {
+    onChange: (event) => {
+      const capital = inputNumber(event.target.value);
+      if (calculationMode === "navFromUnits") {
+        recalculateNavUnit(capital, inputNumber(getValues("units")));
+      } else {
+        recalculateUnits(capital, inputNumber(getValues("navUnitAtSub")));
+      }
+    },
+  });
+  const unitsField = register("units", {
+    onChange: (event) => {
+      setCalculationMode("navFromUnits");
+      recalculateNavUnit(inputNumber(getValues("capitalEur")), inputNumber(event.target.value));
+    },
+  });
+  const navUnitField = register("navUnitAtSub", {
+    onChange: (event) => {
+      setCalculationMode("unitsFromNav");
+      recalculateUnits(inputNumber(getValues("capitalEur")), inputNumber(event.target.value));
+    },
   });
 
   async function onSubmit(values: FormValues) {
@@ -50,7 +97,8 @@ export function InvestorProfilesForm({ profiles }: Props) {
       const result = await saveInvestorProfile(values);
       if (result?.data?.success) {
         setFormStatus("saved");
-        reset({ investorType: "Individual", navUnitAtSub: 1.0 });
+        setCalculationMode("unitsFromNav");
+        reset({ investorType: "Individual", navUnitAtSub: defaultNavUnit });
         router.refresh();
         setTimeout(() => setFormStatus("idle"), 3000);
       } else {
@@ -166,7 +214,7 @@ export function InvestorProfilesForm({ profiles }: Props) {
                     Capital Committed (EUR) <span className="text-destructive">*</span>
                   </label>
                   <input
-                    {...register("capitalEur")}
+                    {...capitalField}
                     type="number"
                     step="0.01"
                     placeholder="0.00"
@@ -179,7 +227,7 @@ export function InvestorProfilesForm({ profiles }: Props) {
                     Units <span className="text-destructive">*</span>
                   </label>
                   <input
-                    {...register("units")}
+                    {...unitsField}
                     type="number"
                     step="0.000001"
                     placeholder="0.000000"
@@ -194,12 +242,15 @@ export function InvestorProfilesForm({ profiles }: Props) {
                   NAV/Unit at Subscription
                 </label>
                 <input
-                  {...register("navUnitAtSub")}
+                  {...navUnitField}
                   type="number"
                   step="0.000001"
                   placeholder="1.000000"
                   className="w-full px-3 py-2 bg-secondary/50 border border-border rounded-lg text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
                 />
+                <p className="text-[11px] text-muted-foreground/70 mt-1">
+                  Defaults to the latest published fund NAV/unit.
+                </p>
               </div>
 
               <div>
