@@ -196,6 +196,25 @@ describe("getPortfolioSnapshot — source record payload with live dashboard ove
     expect(mockPrismaClient.investor_profiles.findMany).toHaveBeenCalled();
   });
 
+  it("keeps transactionsThrough as the source-record upload month", async () => {
+    const sourceRecord = makeSourceRecordPayload({
+      cutoffDate: "2026-05-31",
+      dataFreshness: {
+        lastUploadAt: "2026-06-01T10:00:00Z",
+        transactionsThrough: "2026-05-31",
+        positionsAsOf: "2026-05-31",
+        sourceFiles: ["Ec31_05_2026.csv", "SituazionePatrimoniale_B6166_31052026.pdf"],
+      },
+    });
+    mockPrismaClient.$queryRaw.mockResolvedValueOnce([{ as_of_date: "2026-05-31", payload: sourceRecord }]);
+
+    const result = await getPortfolioSnapshot();
+
+    expect(result.dataFreshness?.transactionsThrough).toBe("2026-05-31");
+    const sqlCalls = mockPrismaClient.$queryRaw.mock.calls.map((args) => String(args[0]));
+    expect(sqlCalls.some((sql) => sql.includes("directa_transactions"))).toBe(false);
+  });
+
   it("unprepared (legacy) snapshot does query investor_profiles", async () => {
     const unprepared = makeSourceRecordPayload({
       sourceRecordReady: false,
@@ -270,8 +289,13 @@ describe("upload-snapshot route — manualInputs validation", () => {
 describe("publish-snapshot route — sourceRecordReady gate", () => {
   beforeEach(() => {
     mockPrismaClient.$queryRaw.mockReset().mockResolvedValue([]);
+    mockPrismaClient.$transaction.mockReset().mockImplementation(
+      async (fn: (tx: unknown) => Promise<unknown>) => fn(mockPrismaClient)
+    );
     mockPrismaClient.portfolio_snapshots.findUnique.mockReset().mockResolvedValue(null);
     mockPrismaClient.portfolio_snapshots.update.mockReset().mockResolvedValue({});
+    mockPrismaClient.admin_manual_values.create.mockReset().mockResolvedValue({});
+    mockPrismaClient.asset_dictionary.upsert.mockReset().mockResolvedValue({});
     vi.mocked(getSession).mockResolvedValue(
       { role: "admin", email: "admin@test.com" } as Awaited<ReturnType<typeof getSession>>
     );
@@ -322,6 +346,85 @@ describe("publish-snapshot route — sourceRecordReady gate", () => {
     expect(response.status).toBe(200);
     expect(json.ok).toBe(true);
     expect(json.snapshotId).toBe(42);
+  });
+
+  it("syncs approved manual non-Directa values into admin tables before publishing", async () => {
+    const sourceRecordPayload = makeSourceRecordPayload({
+      sourceRecordReady: true,
+      overlaySources: {
+        capitalCommitted: 1_800_000,
+        nonListedValue: 275_000,
+        externalCash: 25_000,
+        overlayItemCount: 2,
+        investorProfileCount: 1,
+        brokerageCashSource: {
+          type: "directa_pdf",
+          fileName: "SituazionePatrimoniale_B6166_31032025.pdf",
+          statementDate: "2025-03-31",
+        },
+        manualItems: [
+          {
+            item_key: "TRACKER_PARTICIPATION_APPROVED_ALPHA",
+            item_type: "Non-Listed",
+            value: 175_000,
+            display_name: "Approved Alpha",
+            subcategory: "Participation",
+          },
+          {
+            item_key: "TRACKER_LOAN_APPROVED_BETA",
+            item_type: "Non-Listed",
+            value: 100_000,
+            display_name: "Approved Beta",
+            subcategory: "Private Loan",
+          },
+        ],
+      },
+    });
+    mockPrismaClient.portfolio_snapshots.findUnique.mockResolvedValueOnce({
+      id: BigInt(77),
+      as_of_date: new Date("2025-03-31"),
+      publication_status: "draft",
+      source_file: "Ec31_03_2025.csv, SituazionePatrimoniale_B6166_31032025.pdf",
+      payload: sourceRecordPayload,
+      deterministic_checks: [],
+    });
+
+    const req = new Request("http://localhost/api/admin/publish-snapshot", {
+      method: "POST",
+      body: JSON.stringify({ snapshotId: 77, approvalNote: "approved" }),
+      headers: { "content-type": "application/json" },
+    });
+
+    const response = await publishPost(req as Parameters<typeof publishPost>[0]);
+    const json = (await response.json()) as { ok: boolean; syncedManualItemCount: number };
+
+    expect(response.status).toBe(200);
+    expect(json.ok).toBe(true);
+    expect(json.syncedManualItemCount).toBe(2);
+    expect(mockPrismaClient.asset_dictionary.upsert).toHaveBeenCalledTimes(2);
+    expect(mockPrismaClient.admin_manual_values.create).toHaveBeenCalledTimes(2);
+
+    const firstDictionaryWrite = mockPrismaClient.asset_dictionary.upsert.mock.calls[0][0];
+    expect(firstDictionaryWrite.where.item_key).toBe("TRACKER_PARTICIPATION_APPROVED_ALPHA");
+    expect(firstDictionaryWrite.create.display_name).toBe("Approved Alpha");
+    expect(firstDictionaryWrite.create.item_type).toBe("Non-Listed");
+
+    const manualWrites = mockPrismaClient.admin_manual_values.create.mock.calls.map((args) => args[0].data);
+    expect(manualWrites.map((row) => row.item_key)).toEqual([
+      "TRACKER_PARTICIPATION_APPROVED_ALPHA",
+      "TRACKER_LOAN_APPROVED_BETA",
+    ]);
+    expect(manualWrites.map((row) => row.value)).toEqual([175_000, 100_000]);
+    expect(manualWrites[0].as_of_date).toEqual(new Date("2025-03-31"));
+    expect(mockPrismaClient.portfolio_snapshots.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: BigInt(77) },
+        data: expect.objectContaining({
+          publication_status: "published",
+          approved_by: "admin@test.com",
+        }),
+      })
+    );
   });
 
   it("returns 409 when a blocker check exists (even if source-record)", async () => {

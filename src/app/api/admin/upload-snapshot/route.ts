@@ -5,7 +5,6 @@ import {
   formatDateOnly,
   parseCsvFile,
   parsePositionCsvFile,
-  type RawRow,
 } from "@/lib/directa-preprocess";
 import type { DirectaLiquidityPdf } from "@/lib/directa-pdf";
 import { calculateCashOutsideBrokerage } from "@/lib/cash";
@@ -86,12 +85,6 @@ function previousDirectaCashForComparison(snapshot: PortfolioSnapshot | null): n
   if (!snapshot) return null;
   if (snapshot.overlaySources?.source === "CEO tracker workbook") return null;
   return snapshot.directaCash ?? null;
-}
-
-function transactionsThroughFromTradeLog(rows: RawRow[], fallbackDate: string): string {
-  const tradeRows = rows.filter((row) => row.type !== "Balance" && Number.isFinite(row.date.getTime()));
-  const lastTradeRow = tradeRows.at(-1);
-  return lastTradeRow ? formatDateOnly(lastTradeRow.date) : fallbackDate;
 }
 
 function latestLiquidityPdf(pdfs: DirectaLiquidityPdf[]): DirectaLiquidityPdf | null {
@@ -323,6 +316,7 @@ export async function POST(req: NextRequest) {
   const pdfFilenames: string[] = [];
   const liquidityPdfs: DirectaLiquidityPdf[] = [];
   const uploadedCsvs: UploadedCsv[] = [];
+  const syncedBatchIds: number[] = [];
   const pdfUploadFiles = uploadedFiles.filter((file) => file.name.toLowerCase().endsWith(".pdf"));
   const csvUploadFiles = uploadedFiles.filter((file) => file.name.toLowerCase().endsWith(".csv"));
 
@@ -377,6 +371,7 @@ export async function POST(req: NextRequest) {
       uploadedBy: session.email ?? "admin",
     });
     csvFilenames.push(synced.canonicalFilename);
+    syncedBatchIds.push(synced.id);
   }
   if (csvFilenames.length === 0) {
     return NextResponse.json({ error: "No valid CSV files found (expected .csv)" }, { status: 400 });
@@ -395,7 +390,7 @@ export async function POST(req: NextRequest) {
   const previousSnapshot = previousRows[0]?.payload ?? null;
   const previousCutoffDate = previousSnapshot?.cutoffDate ?? null;
 
-  const sourceData = await readDirectaSourceDataAfterCutoff(previousCutoffDate);
+  const sourceData = await readDirectaSourceDataAfterCutoff(previousCutoffDate, syncedBatchIds);
   if (sourceData.batches.length === 0) {
     return NextResponse.json(
       { error: "No new Directa statement files were found after the current published snapshot. Upload a later Estratto Conto CSV or select the correct snapshot month." },
@@ -528,7 +523,7 @@ export async function POST(req: NextRequest) {
   const sourceRecordedAt = new Date().toISOString();
   payload.dataFreshness = {
     lastUploadAt: sourceRecordedAt,
-    transactionsThrough: transactionsThroughFromTradeLog(sourceData.transactions, payload.cutoffDate),
+    transactionsThrough: payload.cutoffDate,
     positionsAsOf: liquidityPdf.statementDate ?? payload.cutoffDate,
     sourceFiles: newFilenames,
   };

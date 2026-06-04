@@ -68,6 +68,7 @@ export async function getSnapshotHistory(): Promise<SnapshotHistoryRow[]> {
       s.id,
       s.as_of_date,
       COALESCE(
+        NULLIF(s.payload -> 'dataFreshness' ->> 'transactionsThrough', ''),
         (
           SELECT dt.trade_date::text
           FROM directa_transactions dt
@@ -96,8 +97,7 @@ export async function getSnapshotHistory(): Promise<SnapshotHistoryRow[]> {
             b.id DESC,
             dt.row_number DESC
           LIMIT 1
-        ),
-        NULLIF(s.payload -> 'dataFreshness' ->> 'transactionsThrough', '')
+        )
       ) AS transactions_through,
       s.publication_status,
       (s.payload -> 'kpis' ->> 'totalPortfolioValue')::numeric AS portfolio_value,

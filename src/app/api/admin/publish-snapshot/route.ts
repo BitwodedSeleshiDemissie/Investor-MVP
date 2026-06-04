@@ -9,6 +9,86 @@ type ReviewCheck = {
   detail?: string;
 };
 
+type ApprovedManualItem = {
+  item_key: string;
+  item_type: string;
+  value: number;
+  display_name: string | null;
+  subcategory: string | null;
+};
+
+function approvedManualItems(payload: PortfolioSnapshot): ApprovedManualItem[] {
+  const items = payload.overlaySources?.manualItems ?? [];
+  return items
+    .map((item) => ({
+      item_key: String(item.item_key ?? "").trim(),
+      item_type: String(item.item_type ?? "").trim(),
+      value: Number(item.value),
+      display_name: item.display_name?.trim() || null,
+      subcategory: item.subcategory?.trim() || null,
+    }))
+    .filter((item) => item.item_key && Number.isFinite(item.value) && item.value >= 0);
+}
+
+function normalizeDictionaryType(itemType: string): "Cash" | "Non-Listed" {
+  return itemType.toLowerCase() === "cash" ? "Cash" : "Non-Listed";
+}
+
+function manualValuationMethod(itemType: string, subcategory: string | null): string {
+  if (itemType.toLowerCase() === "cash") return "Approved monthly cash value";
+  return subcategory ? `Approved monthly ${subcategory}` : "Approved monthly non-Directa value";
+}
+
+async function syncApprovedManualItems(
+  tx: PrismaTransaction,
+  payload: PortfolioSnapshot,
+  asOfDate: Date
+): Promise<number> {
+  const items = approvedManualItems(payload);
+  for (const [index, item] of items.entries()) {
+    const dbItemType = normalizeDictionaryType(item.item_type);
+    const displayName = item.display_name ?? item.item_key;
+    const subcategory = item.subcategory ?? "";
+    await tx.asset_dictionary.upsert({
+      where: { item_key: item.item_key },
+      create: {
+        item_key: item.item_key,
+        display_name: displayName,
+        item_type: dbItemType,
+        subcategory,
+        currency: "EUR",
+        active: true,
+        sort_order: 1000 + index,
+        notes: "Synced from approved Directa snapshot",
+        updated_at: new Date(),
+      },
+      update: {
+        display_name: displayName,
+        item_type: dbItemType,
+        subcategory,
+        currency: "EUR",
+        active: true,
+        notes: "Synced from approved Directa snapshot",
+        updated_at: new Date(),
+      },
+    });
+    await tx.admin_manual_values.create({
+      data: {
+        as_of_date: asOfDate,
+        item_key: item.item_key,
+        value: item.value,
+        currency: "EUR",
+        valuation_source: "Approved Directa snapshot",
+        valuation_method: manualValuationMethod(item.item_type, item.subcategory),
+        notes: payload.cutoffDate,
+      },
+    });
+  }
+  return items.length;
+}
+
+type PrismaTransaction = Parameters<Parameters<ReturnType<typeof getPrisma>["$transaction"]>[0]>[0];
+
 export async function POST(req: NextRequest) {
   const session = await getSession();
   if (!session || session.role !== "admin") {
@@ -80,14 +160,20 @@ export async function POST(req: NextRequest) {
       ? body.approvalNote.trim().slice(0, 1000)
       : "Admin reviewed Directa files, checks, and audit summary.";
 
-  await prisma.portfolio_snapshots.update({
-    where: { id: BigInt(snapshotId) },
-    data: {
-      publication_status: "published",
-      published_at: new Date(),
-      approved_by: session.email ?? "admin",
-      approval_note: approvalNote,
-    },
+  const publishedAt = new Date();
+  const approvedBy = session.email ?? "admin";
+  const syncedManualItemCount = await prisma.$transaction(async (tx) => {
+    const manualItemCount = await syncApprovedManualItems(tx, payload, new Date(payload.cutoffDate));
+    await tx.portfolio_snapshots.update({
+      where: { id: BigInt(snapshotId) },
+      data: {
+        publication_status: "published",
+        published_at: publishedAt,
+        approved_by: approvedBy,
+        approval_note: approvalNote,
+      },
+    });
+    return manualItemCount;
   });
 
   return NextResponse.json({
@@ -96,5 +182,6 @@ export async function POST(req: NextRequest) {
     cutoffDate: payload.cutoffDate,
     portfolioValue: payload.kpis.totalPortfolioValue,
     holdingsCount: payload.holdings.length,
+    syncedManualItemCount,
   });
 }

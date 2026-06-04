@@ -307,7 +307,16 @@ export async function checkDirectaCsvDuplicate({
     },
   });
   if (exact) {
-    return null;
+    return {
+      originalFilename: fileName,
+      canonicalFilename: exact.canonical_filename,
+      duplicateKind: "exact_file",
+      batchId: Number(exact.id),
+      filename: exact.filename,
+      monthEnd: dateOnly(exact.month_end),
+      uploadedAt: exact.uploaded_at.toISOString(),
+      status: exact.status,
+    };
   }
 
   const sameName = await prisma.directa_upload_batches.findFirst({
@@ -340,12 +349,19 @@ export async function checkDirectaCsvDuplicate({
 }
 
 export async function readDirectaSourceDataAfterCutoff(
-  previousCutoffDate: string | null
+  previousCutoffDate: string | null,
+  batchIds?: number[]
 ): Promise<DirectaSourceData> {
   const prisma = getPrisma();
+  if (batchIds && batchIds.length === 0) {
+    return { batches: [], transactions: [], positions: [] };
+  }
   const cutoff = previousCutoffDate ? parseDateOnly(previousCutoffDate) : null;
   const batches = await prisma.directa_upload_batches.findMany({
     where: {
+      ...(batchIds && batchIds.length > 0
+        ? { id: { in: batchIds.map((id) => BigInt(id)) } }
+        : {}),
       status: "imported",
       ...(cutoff
         ? { OR: [{ month_end: null }, { month_end: { gt: cutoff } }] }
@@ -364,18 +380,18 @@ export async function readDirectaSourceDataAfterCutoff(
     },
   });
 
-  const batchIds = batches.map((batch) => batch.id);
-  if (batchIds.length === 0) {
+  const batchDbIds = batches.map((batch) => batch.id);
+  if (batchDbIds.length === 0) {
     return { batches: [], transactions: [], positions: [] };
   }
 
   const [transactions, positions] = await Promise.all([
     prisma.directa_transactions.findMany({
-      where: { upload_batch_id: { in: batchIds } },
+      where: { upload_batch_id: { in: batchDbIds } },
       orderBy: [{ upload_batch_id: "asc" }, { row_number: "asc" }],
     }),
     prisma.directa_positions.findMany({
-      where: { upload_batch_id: { in: batchIds } },
+      where: { upload_batch_id: { in: batchDbIds } },
       orderBy: [{ month_end: "asc" }, { upload_batch_id: "asc" }, { row_number: "asc" }],
     }),
   ]);

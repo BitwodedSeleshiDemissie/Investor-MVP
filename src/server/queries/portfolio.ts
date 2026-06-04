@@ -215,12 +215,12 @@ async function readTransactionsThrough(snapshot: PortfolioSnapshot, row: Snapsho
 
 async function addReadMetadata(snapshot: PortfolioSnapshot, row: SnapshotDbRow): Promise<void> {
   const cutoffDate = snapshot.cutoffDate || dateOnly(row.as_of_date);
-  const transactionsThrough = await readTransactionsThrough(snapshot, row);
   const storedTransactionsThrough = snapshot.dataFreshness?.transactionsThrough ?? null;
+  const transactionsThrough = storedTransactionsThrough ?? await readTransactionsThrough(snapshot, row);
   snapshot.cutoffDate = cutoffDate;
   snapshot.dataFreshness = {
     lastUploadAt: snapshot.dataFreshness?.lastUploadAt ?? dateTime(row.created_at),
-    transactionsThrough: transactionsThrough ?? storedTransactionsThrough ?? cutoffDate,
+    transactionsThrough: transactionsThrough ?? cutoffDate,
     positionsAsOf: snapshot.dataFreshness?.positionsAsOf ?? cutoffDate,
     sourceFiles: snapshot.dataFreshness?.sourceFiles?.length
       ? snapshot.dataFreshness.sourceFiles
