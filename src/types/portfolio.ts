@@ -110,6 +110,7 @@ export interface OverlaySources {
     fileName?: string | null;
     statementDate?: string | null;
   };
+  seedSource?: string;
   // Source-record item breakdown. Live dashboards may replace these values with current approved admin rows.
   manualItems?: Array<{
     item_key: string;

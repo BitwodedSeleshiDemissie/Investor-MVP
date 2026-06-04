@@ -4,8 +4,8 @@ set -eu
 echo "Installing dependencies..."
 npm ci
 
-echo "Applying Prisma migrations..."
-npm run prisma:deploy
+echo "Applying Prisma migrations and seeding initial approved tracker data if needed..."
+npm run db:bootstrap
 
 echo "Building application..."
 npm run build

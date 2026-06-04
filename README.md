@@ -32,28 +32,34 @@ Run `prisma:deploy` as a release/prestart step in the deployment pipeline before
 
 ## Fresh Database
 
-For a new empty staging or production database, install dependencies, apply Prisma migrations, and build:
+For a new empty staging or production database, install dependencies, apply Prisma migrations, seed the CEO-approved starting snapshot, and build:
 
 ```bash
 npm ci
-npm run prisma:deploy
+npm run db:bootstrap
 npm run build
 npm start
 ```
 
-The one-command VPS helper does the same thing before building the container:
+`db:bootstrap` applies Prisma migrations and imports the approved tracker workbook from `bootstrap/` once. If that bootstrap snapshot already exists, the seed refreshes the stored payload and skips creating a duplicate. To intentionally reseed:
+
+```bash
+BOOTSTRAP_FORCE=true npm run db:seed
+```
+
+The one-command VPS helper runs the same bootstrap before building the container:
 
 ```bash
 sh scripts/deploy-vps.sh
 ```
 
-Vercel is configured in `vercel.json` to apply Prisma migrations before `next build`:
+Vercel is configured in `vercel.json` to run the same bootstrap before `next build`:
 
 ```bash
-npm run prisma:deploy && npm run build
+npm run db:bootstrap && npm run build
 ```
 
-That means a Vercel deployment pointed at an empty Postgres database will create the schema during the build. Snapshot data is loaded through the admin Directa upload flow.
+That means a Vercel deployment pointed at an empty Postgres database will create the schema and preserve the initial approved portfolio knowledge during the build. Monthly updates still happen through the admin Directa upload flow.
 
 ## Fund Settings
 
@@ -67,7 +73,7 @@ These values are stored in the `fund_settings` table and are used by Directa mon
 - Target equity, bond, and alternatives allocations
 - Hurdle, GP carry, and catch-up assumptions for the upcoming waterfall implementation
 
-Do not configure those assumptions through `.env`; `.env` is only for deployment secrets, database connectivity, logging, and public app URL.
+Do not configure those assumptions through `.env`; `.env` is only for deployment secrets, database connectivity, bootstrap file locations, logging, and public app URL.
 
 ## Required Environment
 
@@ -83,6 +89,14 @@ Optional AI audit support for Directa uploads:
 ```bash
 OPENAI_API_KEY=<key>
 OPENAI_AUDIT_MODEL=gpt-4o-mini
+```
+
+Optional bootstrap overrides:
+
+```bash
+CEO_BASELINE_WORKBOOK=bootstrap/Ariete_Capital_Investment_Tracker.xlsx
+BASELINE_DIRECTA_CASH=87386.04
+BOOTSTRAP_FORCE=false
 ```
 
 ## Local Development
@@ -105,6 +119,6 @@ npm run build
 ## Operational Notes
 
 - `postinstall` runs `prisma generate`, so fresh installs generate the Prisma client automatically.
-- There is no deploy-time data seed; snapshots are created from the admin Directa upload flow.
+- `db:bootstrap` is the deploy-time empty-database path: migrate first, seed the approved tracker starting snapshot second.
 - `pg` remains a dependency only as Prisma's PostgreSQL adapter transport; application and tests use Prisma.
-- The monthly Directa workflow is handled by the admin UI and API routes.
+- The monthly Directa workflow is handled by the admin UI and API routes; the tracker seed is only starting knowledge.
