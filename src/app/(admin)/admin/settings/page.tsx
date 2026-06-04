@@ -15,7 +15,7 @@ export default async function AdminSettingsPage() {
             <h1 className="text-xl font-bold text-foreground tracking-tight">Fund Settings</h1>
           </div>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Assumptions used by future CEO and Directa snapshot calculations
+            Assumptions used by Directa snapshot calculations
           </p>
         </div>
         <Link

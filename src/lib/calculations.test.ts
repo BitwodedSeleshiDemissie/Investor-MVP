@@ -8,7 +8,7 @@ import {
   computeTimeseries,
   xirrSafe,
 } from "./calculations";
-import type { WorkbookData, MonthlyReturnRow, TradeRow, HoldingRow, CashFlowRow } from "./excel-loader";
+import type { WorkbookData, MonthlyReturnRow, TradeRow, HoldingRow, CashFlowRow } from "./workbook-data";
 
 const settings = {
   riskFreeRate: 0.035,
@@ -211,7 +211,7 @@ describe("computeIRR", () => {
     expect(irr.investorIrr!).toBeCloseTo(0, 2);
   });
 
-  it("does not double-count tracker IRR schedules that already include terminal NAV", () => {
+  it("does not double-count source IRR schedules that already include terminal NAV", () => {
     const nav = 1_971_514.4958473404;
     const data = makeWorkbook({
       portfolioValue: nav,

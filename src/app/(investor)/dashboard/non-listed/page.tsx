@@ -13,17 +13,16 @@ type NonListedRow = {
 
 function titleFromKey(key: string) {
   return key
-    .replace(/^TRACKER_PARTICIPATION_/, "")
-    .replace(/^TRACKER_LOAN_/, "")
-    .replace(/^CEO_TRACKER_/, "")
+    .replace(/^PRIVATE_PARTICIPATION_/, "")
+    .replace(/^PRIVATE_LOAN_/, "")
     .replace(/_/g, " ")
     .toLowerCase()
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 function bucketForKey(key: string): NonListedRow["bucket"] {
-  if (key.startsWith("TRACKER_PARTICIPATION_") || key === "CEO_TRACKER_PARTICIPATIONS" || key === "PRIVATE_PARTICIPATIONS") return "participation";
-  if (key.startsWith("TRACKER_LOAN_") || key === "CEO_TRACKER_PRIVATE_LOANS" || key === "PRIVATE_LOAN_PRINCIPAL") return "loan";
+  if (key.startsWith("PRIVATE_PARTICIPATION_") || key === "PRIVATE_PARTICIPATIONS") return "participation";
+  if (key.startsWith("PRIVATE_LOAN_") || key === "PRIVATE_LOAN_PRINCIPAL") return "loan";
   return "other";
 }
 

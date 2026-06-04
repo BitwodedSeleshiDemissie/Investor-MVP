@@ -244,12 +244,12 @@ describe("getFixedPortfolioValues — reads admin-entered values", () => {
     mockPrismaClient.$queryRaw
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([
-        { as_of_date: "2026-05-18", item_key: "TRACKER_PARTICIPATION_ARITE_TECH_SOLUTIONS", value: "100000" },
-        { as_of_date: "2026-05-18", item_key: "TRACKER_PARTICIPATION_BOLLETTE_REPUBLIC", value: "30000" },
-        { as_of_date: "2026-05-18", item_key: "TRACKER_PARTICIPATION_BS2_SRL", value: "25000" },
-        { as_of_date: "2026-05-18", item_key: "TRACKER_LOAN_ATS", value: "135000" },
-        { as_of_date: "2026-05-19", item_key: "TRACKER_PARTICIPATION_ARITE_TECH_TEST_SOLTUONS", value: "117000" },
-        { as_of_date: "2026-05-19", item_key: "TRACKER_LOAN_BIT_PAYMENT_STYLE", value: "120" },
+        { as_of_date: "2026-05-18", item_key: "PRIVATE_PARTICIPATION_ARITE_TECH_SOLUTIONS", value: "100000" },
+        { as_of_date: "2026-05-18", item_key: "PRIVATE_PARTICIPATION_BOLLETTE_REPUBLIC", value: "30000" },
+        { as_of_date: "2026-05-18", item_key: "PRIVATE_PARTICIPATION_BS2_SRL", value: "25000" },
+        { as_of_date: "2026-05-18", item_key: "PRIVATE_LOAN_ATS", value: "135000" },
+        { as_of_date: "2026-05-19", item_key: "PRIVATE_PARTICIPATION_ARITE_TECH_TEST_SOLTUONS", value: "117000" },
+        { as_of_date: "2026-05-19", item_key: "PRIVATE_LOAN_BIT_PAYMENT_STYLE", value: "120" },
       ])
       .mockResolvedValueOnce([]);
 
@@ -260,8 +260,8 @@ describe("getFixedPortfolioValues — reads admin-entered values", () => {
     expect(result.history[0].privateParticipations).toBe(272_000);
     expect(result.history[0].privateLoanPrincipal).toBe(135_120);
     expect(result.history[0].itemKeys).toEqual([
-      "TRACKER_PARTICIPATION_ARITE_TECH_TEST_SOLTUONS",
-      "TRACKER_LOAN_BIT_PAYMENT_STYLE",
+      "PRIVATE_PARTICIPATION_ARITE_TECH_TEST_SOLTUONS",
+      "PRIVATE_LOAN_BIT_PAYMENT_STYLE",
     ]);
     expect(result.history[1].asOfDate).toBe("2026-05-18");
     expect(result.history[1].privateParticipations).toBe(155_000);
@@ -524,7 +524,7 @@ describe("source record — live dashboard overlay after publish", () => {
     expect(result.composition.nonListed).toBe(500_000);
   });
 
-  it("unprepared (legacy) snapshot does query investor_profiles", async () => {
+  it("unprepared source record does query investor_profiles", async () => {
     const unprepared = makeSourceRecordPayload({
       sourceRecordReady: false,
       sourceRecordedAt: undefined,

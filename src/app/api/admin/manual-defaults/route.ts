@@ -24,14 +24,14 @@ export async function GET() {
       SELECT EXISTS (
         SELECT 1
         FROM admin_manual_values
-        WHERE item_key LIKE 'TRACKER_PARTICIPATION_%'
+        WHERE item_key LIKE 'PRIVATE_PARTICIPATION_%'
       ) AS yes
     ),
     has_detailed_loans AS (
       SELECT EXISTS (
         SELECT 1
         FROM admin_manual_values
-        WHERE item_key LIKE 'TRACKER_LOAN_%'
+        WHERE item_key LIKE 'PRIVATE_LOAN_%'
       ) AS yes
     )
     SELECT

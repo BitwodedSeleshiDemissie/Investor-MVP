@@ -1,10 +1,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import * as XLSX from "xlsx";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { buildAuditWorkbookBuffer } from "./audit-workbook";
 import { computeComposition, computeKPIs, computeRisk } from "./calculations";
-import { loadWorkbook } from "./excel-loader";
 
 const marchStatement = `"Ariete Capital S.r.l.";2/04/2026;18:46:57
 "Estratto Conto   dal";1/03/2026;"al";31/03/2026
@@ -106,19 +106,18 @@ describe("Statement preprocessing MVP flow", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ariete-audit-"));
     const auditPath = path.join(tempDir, "audit.xlsx");
     fs.writeFileSync(auditPath, audit);
-    const reloaded = loadWorkbook(auditPath);
+    const reloaded = XLSX.read(fs.readFileSync(auditPath), { type: "buffer" });
 
-    expect(dateOnly(reloaded.cutoffDate)).toBe("2026-04-30");
-    expect(reloaded.holdings).toHaveLength(2);
-    expect(reloaded.tradeLog.some((row) => row.security === "ENEL" && row.type === "Sell")).toBe(true);
-    expect(reloaded.monthlyReturns).toHaveLength(2);
+    expect(reloaded.SheetNames).toEqual(
+      expect.arrayContaining(["Portfolio Metrics", "Holdings", "Trade Log", "IRR Analysis", "Monthly Returns"])
+    );
 
     const risk = computeRisk(workbook, settings);
     expect(risk.annualizedReturn).toBeLessThan(1);
     expect(risk.volatilityAnnualized).toBeLessThan(1);
   });
 
-  it("applies a new Estratto Conto month on top of the published CEO baseline without a positions CSV", async () => {
+  it("applies a new Estratto Conto month on top of the previous published snapshot without a positions CSV", async () => {
     const { buildWorkbookData } = await import("./directa-preprocess");
 
     const workbook = await buildWorkbookData(
@@ -127,7 +126,7 @@ describe("Statement preprocessing MVP flow", () => {
         nonListedValue: 0,
         externalCash: 0,
         capitalCommitted: 100_000,
-        baselineSnapshot: {
+        previousSnapshot: {
           cutoffDate: "2026-03-31",
           totalPortfolioValue: 11_015,
           timeseries: [

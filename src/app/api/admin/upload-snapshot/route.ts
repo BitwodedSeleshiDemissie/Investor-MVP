@@ -8,7 +8,7 @@ import {
 } from "@/lib/directa-preprocess";
 import type { DirectaLiquidityPdf } from "@/lib/directa-pdf";
 import { calculateCashOutsideBrokerage } from "@/lib/cash";
-import type { HoldingRow, WorkbookData } from "@/lib/excel-loader";
+import type { HoldingRow, WorkbookData } from "@/lib/workbook-data";
 import {
   buildDeterministicChecks,
   type ReviewCheck,
@@ -31,9 +31,10 @@ import {
 import { getSession } from "@/lib/auth";
 import { calculationSettings, getFundSettings } from "@/server/fund-settings";
 import {
+  buildDirectaSourceData,
   monthEndFromFilename,
-  readDirectaSourceDataAfterCutoff,
   syncDirectaCsvFile,
+  type DirectaSyncResult,
 } from "@/server/directa-ingestion";
 import { syncDirectaPdfFile } from "@/server/directa-pdf-ingestion";
 import type { InvestorPerf, PortfolioSnapshot } from "@/types/portfolio";
@@ -83,7 +84,6 @@ function formatMoney(value: number): string {
 
 function previousDirectaCashForComparison(snapshot: PortfolioSnapshot | null): number | null {
   if (!snapshot) return null;
-  if (snapshot.overlaySources?.source === "CEO tracker workbook") return null;
   return snapshot.directaCash ?? null;
 }
 
@@ -208,7 +208,7 @@ Answer each of the 5 questions below with exactly one bullet point. Use only the
 Be factual and specific. Total output must be under 180 words.
 
 Questions to answer:
-1. Positions & trades: Do the quantities and holdings count look coherent with the Estratto Conto trade history? If no positions file exists, that is acceptable in CEO tracker valuation mode.
+1. Positions & trades: Do the quantities and holdings count look coherent with the Estratto Conto trade history and Directa PDF account snapshot?
 2. Cash: Does the brokerage account cash figure from the Directa liquidity PDF make sense?
 3. Month-on-month change: Is the total portfolio change from last month within a plausible range, or does it need explanation?
 4. Lending / collateral: Were lending or collateral rows detected? Do they appear fully reconciled in the final positions?
@@ -316,7 +316,7 @@ export async function POST(req: NextRequest) {
   const pdfFilenames: string[] = [];
   const liquidityPdfs: DirectaLiquidityPdf[] = [];
   const uploadedCsvs: UploadedCsv[] = [];
-  const syncedBatchIds: number[] = [];
+  const syncedCsvs: DirectaSyncResult[] = [];
   const pdfUploadFiles = uploadedFiles.filter((file) => file.name.toLowerCase().endsWith(".pdf"));
   const csvUploadFiles = uploadedFiles.filter((file) => file.name.toLowerCase().endsWith(".csv"));
 
@@ -371,7 +371,7 @@ export async function POST(req: NextRequest) {
       uploadedBy: session.email ?? "admin",
     });
     csvFilenames.push(synced.canonicalFilename);
-    syncedBatchIds.push(synced.id);
+    syncedCsvs.push(synced);
   }
   if (csvFilenames.length === 0) {
     return NextResponse.json({ error: "No valid CSV files found (expected .csv)" }, { status: 400 });
@@ -382,7 +382,6 @@ export async function POST(req: NextRequest) {
     SELECT id, payload
     FROM portfolio_snapshots
     WHERE publication_status = 'published'
-      AND COALESCE(source_file, '') NOT ILIKE 'CEO tracker context:%'
     ORDER BY as_of_date DESC, created_at DESC
     LIMIT 1
   `;
@@ -390,7 +389,7 @@ export async function POST(req: NextRequest) {
   const previousSnapshot = previousRows[0]?.payload ?? null;
   const previousCutoffDate = previousSnapshot?.cutoffDate ?? null;
 
-  const sourceData = await readDirectaSourceDataAfterCutoff(previousCutoffDate, syncedBatchIds);
+  const sourceData = buildDirectaSourceData(syncedCsvs, previousCutoffDate);
   if (sourceData.batches.length === 0) {
     return NextResponse.json(
       { error: "No new Directa statement files were found after the current published snapshot. Upload a later Estratto Conto CSV or select the correct snapshot month." },
@@ -440,7 +439,7 @@ export async function POST(req: NextRequest) {
         nonListedValue,
         externalCash,
         capitalCommitted,
-        baselineSnapshot: previousSnapshot
+        previousSnapshot: previousSnapshot
           ? {
               cutoffDate: previousSnapshot.cutoffDate,
               totalPortfolioValue: previousSnapshot.kpis.totalPortfolioValue,

@@ -106,7 +106,7 @@ export interface OverlaySources {
   overlayItemCount: number;
   investorProfileCount: number;
   brokerageCashSource?: {
-    type: "directa_pdf" | "csv_inference" | "ceo_tracker" | "unknown";
+    type: "directa_pdf" | "csv_inference" | "unknown";
     fileName?: string | null;
     statementDate?: string | null;
   };
@@ -119,7 +119,6 @@ export interface OverlaySources {
     display_name?: string | null;
     subcategory?: string | null;
   }>;
-  source?: string;
 }
 
 export interface DataFreshness {
@@ -147,12 +146,9 @@ export interface PortfolioSnapshot {
   portfolioId: string;
   warnings: string[];
   investorPerformance: InvestorPerf[];
-  // Immutability metadata — present on all snapshots created after the freeze system was introduced.
-  // Absence means legacy snapshot: use raw payload without live overlay re-reads.
+  // Immutability metadata for snapshots created from the current Directa source-record flow.
   sourceRecordReady?: boolean;
   sourceRecordedAt?: string;
-  overlaysFrozen?: boolean;
-  frozenAt?: string;
   overlaySources?: OverlaySources;
 }
 

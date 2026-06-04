@@ -58,17 +58,6 @@ function splitSourceFiles(value: string | null | undefined): string[] {
     .filter(Boolean);
 }
 
-function snapshotSourceFiles(snapshot: PortfolioSnapshot, row: SnapshotDbRow): string[] {
-  return snapshot.dataFreshness?.sourceFiles?.length
-    ? snapshot.dataFreshness.sourceFiles
-    : splitSourceFiles(row.source_file);
-}
-
-function csvSourceFiles(snapshot: PortfolioSnapshot, row: SnapshotDbRow): string[] {
-  const files = snapshotSourceFiles(snapshot, row);
-  return files.filter((file) => file.toLowerCase().endsWith(".csv"));
-}
-
 function cloneSnapshot(snapshot: PortfolioSnapshot): PortfolioSnapshot {
   return JSON.parse(JSON.stringify(snapshot)) as PortfolioSnapshot;
 }
@@ -128,7 +117,7 @@ function emptyPortfolioSnapshot(
     portfolioId: settings.portfolioId,
     warnings: [
       warning ??
-        "No published portfolio snapshot exists yet. Admin: upload the CEO tracker workbook to initialize the portal.",
+        "No published portfolio snapshot exists yet. Admin: upload Directa CSVs and the Directa PDF to initialize the portal.",
     ],
     investorPerformance: [],
     dataFreshness: {
@@ -155,72 +144,20 @@ async function readLatestSnapshot(): Promise<SnapshotDbRow | null> {
   const rows = await prisma.$queryRaw<SnapshotDbRow[]>`
     SELECT as_of_date, created_at, source_file, payload
     FROM portfolio_snapshots
-    WHERE COALESCE(source_file, '') NOT ILIKE 'CEO tracker context:%'
-      AND publication_status = 'published'
-    ORDER BY as_of_date DESC, created_at DESC
-    LIMIT 1
-  `;
-  if (rows[0]) return rows[0];
-
-  const fallback = await prisma.$queryRaw<SnapshotDbRow[]>`
-    SELECT as_of_date, created_at, source_file, payload
-    FROM portfolio_snapshots
     WHERE publication_status = 'published'
     ORDER BY as_of_date DESC, created_at DESC
     LIMIT 1
   `;
-  return fallback[0] ?? null;
-}
-
-async function readTransactionsThrough(snapshot: PortfolioSnapshot, row: SnapshotDbRow): Promise<string | null> {
-  const prisma = getPrisma();
-  const cutoffDate = snapshot.cutoffDate || dateOnly(row.as_of_date);
-  const sourceFilesForSnapshot = snapshotSourceFiles(snapshot, row);
-  const sourceFiles = csvSourceFiles(snapshot, row);
-
-  if (sourceFiles.length > 0) {
-    const rows = await prisma.$queryRaw<Array<{ transaction_date: Date | null }>>`
-      SELECT dt.trade_date AS transaction_date
-      FROM directa_transactions dt
-      JOIN directa_upload_batches b ON b.id = dt.upload_batch_id
-      WHERE dt.source_file = ANY(${sourceFiles}::text[])
-        AND dt.transaction_type <> 'Balance'
-      ORDER BY
-        COALESCE(b.month_end, dt.file_date, dt.trade_date) DESC,
-        b.uploaded_at DESC,
-        b.id DESC,
-        dt.row_number DESC
-      LIMIT 1
-    `;
-    if (rows[0]?.transaction_date) return dateOnly(rows[0].transaction_date);
-  }
-  if (sourceFilesForSnapshot.length > 0) return null;
-
-  const cutoff = new Date(`${cutoffDate}T00:00:00`);
-  const rows = await prisma.$queryRaw<Array<{ transaction_date: Date | null }>>`
-    SELECT dt.trade_date AS transaction_date
-    FROM directa_transactions dt
-    JOIN directa_upload_batches b ON b.id = dt.upload_batch_id
-    WHERE dt.trade_date <= ${cutoff}
-      AND dt.transaction_type <> 'Balance'
-    ORDER BY
-      COALESCE(b.month_end, dt.file_date, dt.trade_date) DESC,
-      b.uploaded_at DESC,
-      b.id DESC,
-      dt.row_number DESC
-    LIMIT 1
-  `;
-  return rows[0]?.transaction_date ? dateOnly(rows[0].transaction_date) : null;
+  return rows[0] ?? null;
 }
 
 async function addReadMetadata(snapshot: PortfolioSnapshot, row: SnapshotDbRow): Promise<void> {
   const cutoffDate = snapshot.cutoffDate || dateOnly(row.as_of_date);
   const storedTransactionsThrough = snapshot.dataFreshness?.transactionsThrough ?? null;
-  const transactionsThrough = storedTransactionsThrough ?? await readTransactionsThrough(snapshot, row);
   snapshot.cutoffDate = cutoffDate;
   snapshot.dataFreshness = {
     lastUploadAt: snapshot.dataFreshness?.lastUploadAt ?? dateTime(row.created_at),
-    transactionsThrough: transactionsThrough ?? cutoffDate,
+    transactionsThrough: storedTransactionsThrough ?? cutoffDate,
     positionsAsOf: snapshot.dataFreshness?.positionsAsOf ?? cutoffDate,
     sourceFiles: snapshot.dataFreshness?.sourceFiles?.length
       ? snapshot.dataFreshness.sourceFiles

@@ -273,10 +273,10 @@ export function DirectaUpload() {
 
   const nonListedItems = manualItems.filter((item) => item.item_type.toLowerCase() !== "cash");
   const participationItems = nonListedItems.filter(
-    (item) => item.item_key.startsWith("TRACKER_PARTICIPATION_") || (item.subcategory ?? "").toLowerCase().includes("participation")
+    (item) => item.item_key.startsWith("PRIVATE_PARTICIPATION_") || (item.subcategory ?? "").toLowerCase().includes("participation")
   );
   const loanItems = nonListedItems.filter(
-    (item) => item.item_key.startsWith("TRACKER_LOAN_") || (item.subcategory ?? "").toLowerCase().includes("loan")
+    (item) => item.item_key.startsWith("PRIVATE_LOAN_") || (item.subcategory ?? "").toLowerCase().includes("loan")
   );
   const otherNonListedItems = nonListedItems.filter(
     (item) => !participationItems.includes(item) && !loanItems.includes(item)
@@ -476,8 +476,8 @@ export function DirectaUpload() {
 
           {nonListedItems.length > 0 && (
             <>
-              {renderManualGroup("Participations - sheet 06", participationItems)}
-              {renderManualGroup("Private loan principal - sheet 07", loanItems)}
+              {renderManualGroup("Participations", participationItems)}
+              {renderManualGroup("Private loan principal", loanItems)}
               {renderManualGroup("Other non-Directa values", otherNonListedItems)}
             </>
           )}

@@ -23,7 +23,7 @@ export default async function AdminNonListedPage() {
         <div>
           <h1 className="text-xl font-bold text-foreground tracking-tight">Non-Listed Assets</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Enter approved participation rows in the same structure as the workbook register
+            Enter approved participation and private loan rows for the next snapshot
           </p>
         </div>
         <Link

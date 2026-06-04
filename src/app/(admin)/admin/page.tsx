@@ -51,10 +51,10 @@ export default async function AdminPage() {
 
   const steps = [
     {
-      label: "Baseline snapshot uploaded",
+      label: "Snapshot uploaded",
       detail: latestPublished
         ? `Published: ${formatDate(latestPublished.cutoffDate)} · data through ${formatDate(latestTransactionsThrough)}`
-        : "No snapshot — upload the CEO tracker workbook",
+        : "No snapshot - upload Directa CSVs and the Directa PDF",
       ok: Boolean(latestPublished),
     },
     {
@@ -90,7 +90,7 @@ export default async function AdminPage() {
           href: "/admin/non-listed",
           icon: TrendingUp,
           title: "Non-Listed Assets",
-          description: `Private Participations and Private Loan Principal — manually approved each month from the CEO tracker`,
+          description: "Private Participations and Private Loan Principal approved each month",
           stat: totalNonListed > 0
             ? `${formatEur(privateParticipations)} participations · ${formatEur(privateLoanPrincipal)} loans`
             : "No values entered",
@@ -140,7 +140,7 @@ export default async function AdminPage() {
     },
     {
       label: "Data Upload",
-      description: "Upload the CEO tracker once as the official baseline, then Directa CSVs plus the Directa PDF each month.",
+      description: "Upload Directa CSVs plus the Directa PDF each month.",
       items: [
         {
           href: "/admin/upload",

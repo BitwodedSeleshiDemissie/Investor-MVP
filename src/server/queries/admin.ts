@@ -69,35 +69,7 @@ export async function getSnapshotHistory(): Promise<SnapshotHistoryRow[]> {
       s.as_of_date,
       COALESCE(
         NULLIF(s.payload -> 'dataFreshness' ->> 'transactionsThrough', ''),
-        (
-          SELECT dt.trade_date::text
-          FROM directa_transactions dt
-          JOIN directa_upload_batches b ON b.id = dt.upload_batch_id
-          WHERE dt.transaction_type <> 'Balance'
-            AND (
-              dt.source_file IN (
-                SELECT source_file.value
-                FROM jsonb_array_elements_text(
-                  CASE
-                    WHEN jsonb_typeof(s.payload #> '{dataFreshness,sourceFiles}') = 'array'
-                      THEN s.payload #> '{dataFreshness,sourceFiles}'
-                    ELSE '[]'::jsonb
-                  END
-                ) AS source_file(value)
-                WHERE source_file.value ILIKE '%.csv'
-              )
-              OR (
-                jsonb_typeof(s.payload #> '{dataFreshness,sourceFiles}') IS DISTINCT FROM 'array'
-                AND dt.trade_date <= s.as_of_date
-              )
-            )
-          ORDER BY
-            COALESCE(b.month_end, dt.file_date, dt.trade_date) DESC,
-            b.uploaded_at DESC,
-            b.id DESC,
-            dt.row_number DESC
-          LIMIT 1
-        )
+        s.as_of_date::text
       ) AS transactions_through,
       s.publication_status,
       (s.payload -> 'kpis' ->> 'totalPortfolioValue')::numeric AS portfolio_value,
@@ -113,7 +85,6 @@ export async function getSnapshotHistory(): Promise<SnapshotHistoryRow[]> {
       ) AS has_artifact
     FROM portfolio_snapshots s
     WHERE s.as_of_date >= NOW() - INTERVAL '13 months'
-      AND COALESCE(s.source_file, '') NOT ILIKE 'CEO tracker context:%'
     ORDER BY s.as_of_date DESC, s.created_at DESC
   `;
   return rows.map((r) => ({
@@ -142,7 +113,6 @@ export async function getAdminFreshness(): Promise<AdminFreshness> {
       FROM (
         SELECT 'Snapshot upload' AS area, created_at AS updated_at
         FROM portfolio_snapshots
-        WHERE COALESCE(source_file, '') NOT ILIKE 'CEO tracker context:%'
         UNION ALL
         SELECT 'Manual values' AS area, created_at AS updated_at
         FROM admin_manual_values
@@ -281,8 +251,7 @@ function getSourceRecordCashOutsideBrokerage(value: unknown): number {
     const itemType = item.item_type.toLowerCase();
     return (
       itemType === "cash" ||
-      item.item_key === "CASH_OUTSIDE_DIRECTA" ||
-      item.item_key === "TRACKER_EXTERNAL_CASH_DIFFERENCE"
+      item.item_key === "CASH_OUTSIDE_DIRECTA"
     );
   });
   if (cashItems.length > 0) return cashItems.reduce((sum, item) => sum + Number(item.value || 0), 0);
@@ -328,8 +297,8 @@ export async function getFixedPortfolioValues(): Promise<FixedPortfolioValues> {
           value
         FROM admin_manual_values
         WHERE item_key = ANY(${KEYS}::text[])
-           OR item_key LIKE 'TRACKER_PARTICIPATION_%'
-           OR item_key LIKE 'TRACKER_LOAN_%'
+           OR item_key LIKE 'PRIVATE_PARTICIPATION_%'
+           OR item_key LIKE 'PRIVATE_LOAN_%'
         ORDER BY as_of_date, item_key, created_at DESC, id DESC
       ) latest_per_date
       ORDER BY as_of_date ASC, item_key ASC
@@ -340,7 +309,6 @@ export async function getFixedPortfolioValues(): Promise<FixedPortfolioValues> {
         payload
       FROM portfolio_snapshots
       WHERE publication_status = 'published'
-        AND COALESCE(source_file, '') NOT ILIKE 'CEO tracker context:%'
       ORDER BY as_of_date DESC, created_at DESC
       LIMIT 1
     `,
@@ -356,8 +324,8 @@ export async function getFixedPortfolioValues(): Promise<FixedPortfolioValues> {
   ]);
 
   const byKey = new Map(latestRows.map((r) => [r.item_key, Number(r.value)]));
-  const detailedParticipationRows = latestRows.filter((r) => r.item_key.startsWith("TRACKER_PARTICIPATION_"));
-  const detailedLoanRows = latestRows.filter((r) => r.item_key.startsWith("TRACKER_LOAN_"));
+  const detailedParticipationRows = latestRows.filter((r) => r.item_key.startsWith("PRIVATE_PARTICIPATION_"));
+  const detailedLoanRows = latestRows.filter((r) => r.item_key.startsWith("PRIVATE_LOAN_"));
   const detailedParticipations = detailedParticipationRows.reduce((s, r) => s + Number(r.value), 0);
   const detailedLoans = detailedLoanRows.reduce((s, r) => s + Number(r.value), 0);
   const manualNonListedRows = latestRows.filter((row) => {
@@ -403,10 +371,10 @@ export async function getFixedPortfolioValues(): Promise<FixedPortfolioValues> {
         itemKeys.add(row.item_key);
       }
       const dParticipations = [...balancesByKey.entries()]
-        .filter(([key]) => key.startsWith("TRACKER_PARTICIPATION_"))
+        .filter(([key]) => key.startsWith("PRIVATE_PARTICIPATION_"))
         .reduce((sum, [, v]) => sum + v, 0);
       const dLoans = [...balancesByKey.entries()]
-        .filter(([key]) => key.startsWith("TRACKER_LOAN_"))
+        .filter(([key]) => key.startsWith("PRIVATE_LOAN_"))
         .reduce((sum, [, v]) => sum + v, 0);
       return {
         asOfDate,

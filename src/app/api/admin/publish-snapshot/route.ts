@@ -124,7 +124,7 @@ export async function POST(req: NextRequest) {
   }
 
   const payload = draft.payload as unknown as PortfolioSnapshot;
-  const sourceRecordReady = payload.sourceRecordReady ?? payload.overlaysFrozen ?? false;
+  const sourceRecordReady = payload.sourceRecordReady ?? false;
   if (!sourceRecordReady) {
     return NextResponse.json(
       { error: "Snapshot is not ready to publish. Re-upload to generate a Directa source record from the CSV and PDF files." },

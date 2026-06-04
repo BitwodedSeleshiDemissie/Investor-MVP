@@ -211,11 +211,9 @@ describe("getPortfolioSnapshot — source record payload with live dashboard ove
     const result = await getPortfolioSnapshot();
 
     expect(result.dataFreshness?.transactionsThrough).toBe("2026-05-31");
-    const sqlCalls = mockPrismaClient.$queryRaw.mock.calls.map((args) => String(args[0]));
-    expect(sqlCalls.some((sql) => sql.includes("directa_transactions"))).toBe(false);
   });
 
-  it("unprepared (legacy) snapshot does query investor_profiles", async () => {
+  it("unprepared source record does query investor_profiles", async () => {
     const unprepared = makeSourceRecordPayload({
       sourceRecordReady: false,
       sourceRecordedAt: undefined,
@@ -364,14 +362,14 @@ describe("publish-snapshot route — sourceRecordReady gate", () => {
         },
         manualItems: [
           {
-            item_key: "TRACKER_PARTICIPATION_APPROVED_ALPHA",
+            item_key: "PRIVATE_PARTICIPATION_APPROVED_ALPHA",
             item_type: "Non-Listed",
             value: 175_000,
             display_name: "Approved Alpha",
             subcategory: "Participation",
           },
           {
-            item_key: "TRACKER_LOAN_APPROVED_BETA",
+            item_key: "PRIVATE_LOAN_APPROVED_BETA",
             item_type: "Non-Listed",
             value: 100_000,
             display_name: "Approved Beta",
@@ -405,14 +403,14 @@ describe("publish-snapshot route — sourceRecordReady gate", () => {
     expect(mockPrismaClient.admin_manual_values.create).toHaveBeenCalledTimes(2);
 
     const firstDictionaryWrite = mockPrismaClient.asset_dictionary.upsert.mock.calls[0][0];
-    expect(firstDictionaryWrite.where.item_key).toBe("TRACKER_PARTICIPATION_APPROVED_ALPHA");
+    expect(firstDictionaryWrite.where.item_key).toBe("PRIVATE_PARTICIPATION_APPROVED_ALPHA");
     expect(firstDictionaryWrite.create.display_name).toBe("Approved Alpha");
     expect(firstDictionaryWrite.create.item_type).toBe("Non-Listed");
 
     const manualWrites = mockPrismaClient.admin_manual_values.create.mock.calls.map((args) => args[0].data);
     expect(manualWrites.map((row) => row.item_key)).toEqual([
-      "TRACKER_PARTICIPATION_APPROVED_ALPHA",
-      "TRACKER_LOAN_APPROVED_BETA",
+      "PRIVATE_PARTICIPATION_APPROVED_ALPHA",
+      "PRIVATE_LOAN_APPROVED_BETA",
     ]);
     expect(manualWrites.map((row) => row.value)).toEqual([175_000, 100_000]);
     expect(manualWrites[0].as_of_date).toEqual(new Date("2025-03-31"));

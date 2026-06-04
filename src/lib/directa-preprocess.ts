@@ -1,7 +1,7 @@
 // Ports preprocess.py: statement CSV exports -> WorkbookData (in-memory, no Excel round-trip).
 // The resulting WorkbookData is fed directly into the existing calculations.ts functions.
 
-import type { WorkbookData, HoldingRow, CashFlowRow, MonthlyReturnRow } from "./excel-loader";
+import type { WorkbookData, HoldingRow, CashFlowRow, MonthlyReturnRow } from "./workbook-data";
 import type { Holding, NavPoint } from "@/types/portfolio";
 import { dbEnabled, getPrisma } from "@/db/prisma";
 import { resolveIsin } from "./isin";
@@ -478,10 +478,10 @@ function tipoFromAssetClass(assetClass: string): Tipo {
   return "Other";
 }
 
-function openingRowsFromBaseline(baseline: BaselineSnapshotInput | undefined): RawRow[] {
-  if (!baseline) return [];
-  const baselineDate = parseDateOnly(baseline.cutoffDate);
-  return baseline.holdings
+function openingRowsFromPreviousSnapshot(snapshot: PreviousSnapshotInput | undefined): RawRow[] {
+  if (!snapshot) return [];
+  const snapshotDate = parseDateOnly(snapshot.cutoffDate);
+  return snapshot.holdings
     .filter((holding) => holding.shares > 0 && holding.marketValue > 0)
     .map((holding) => {
       const avgCostBasis = holding.avgCost > 0 ? holding.avgCost * holding.shares : 0;
@@ -489,8 +489,8 @@ function openingRowsFromBaseline(baseline: BaselineSnapshotInput | undefined): R
       const currentPrice = holding.currentPrice > 0 ? holding.currentPrice : holding.marketValue / holding.shares;
       return {
         sourceFile: "published snapshot opening positions",
-        fileDate: baselineDate,
-        date: baselineDate,
+        fileDate: snapshotDate,
+        date: snapshotDate,
         settlement: null,
         security: holding.security,
         isin: holding.isin || resolveIsin(holding.security),
@@ -506,9 +506,9 @@ function openingRowsFromBaseline(baseline: BaselineSnapshotInput | undefined): R
     });
 }
 
-function monthlyRowsFromBaseline(baseline: BaselineSnapshotInput | undefined): MonthlyReturnRow[] {
-  if (!baseline) return [];
-  return baseline.timeseries.map((point) => ({
+function monthlyRowsFromPreviousSnapshot(snapshot: PreviousSnapshotInput | undefined): MonthlyReturnRow[] {
+  if (!snapshot) return [];
+  return snapshot.timeseries.map((point) => ({
     monthEnd: parseDateOnly(point.monthEnd),
     nav: point.nav,
     monthlyReturn: point.monthlyReturn,
@@ -783,10 +783,10 @@ export interface AdminOverlays {
   nonListedValue: number;
   externalCash: number;
   capitalCommitted: number;
-  baselineSnapshot?: BaselineSnapshotInput | null;
+  previousSnapshot?: PreviousSnapshotInput | null;
 }
 
-export interface BaselineSnapshotInput {
+export interface PreviousSnapshotInput {
   cutoffDate: string;
   totalPortfolioValue: number;
   holdings: Holding[];
@@ -798,9 +798,9 @@ export async function buildWorkbookDataFromParsedRows(
   parsedPositions: PositionPriceRow[],
   overlays: AdminOverlays
 ): Promise<WorkbookData> {
-  // Step 1: combine the published baseline opening rows with persisted Directa rows.
+  // Step 1: combine the previous published opening rows with persisted Directa rows.
   const allRows: RawRow[] = [
-    ...openingRowsFromBaseline(overlays.baselineSnapshot ?? undefined),
+    ...openingRowsFromPreviousSnapshot(overlays.previousSnapshot ?? undefined),
     ...parsedRows,
   ];
   const positions: PositionMap = new Map();
@@ -855,12 +855,12 @@ export async function buildWorkbookDataFromParsedRows(
     allRows,
     cutoff,
     positions,
-    overlays.baselineSnapshot?.totalPortfolioValue ?? null
+    overlays.previousSnapshot?.totalPortfolioValue ?? null
   );
-  const baselineMonthlyReturns = monthlyRowsFromBaseline(overlays.baselineSnapshot ?? undefined);
+  const previousMonthlyReturns = monthlyRowsFromPreviousSnapshot(overlays.previousSnapshot ?? undefined);
   const firstIncrementalMonth = incrementalMonthlyReturns[0]?.monthEnd ?? null;
   const monthlyReturns = [
-    ...baselineMonthlyReturns.filter(
+    ...previousMonthlyReturns.filter(
       (row) => !firstIncrementalMonth || row.monthEnd < firstIncrementalMonth
     ),
     ...incrementalMonthlyReturns,

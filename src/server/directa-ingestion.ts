@@ -8,7 +8,6 @@ import {
   type PositionPriceRow,
   type RawRow,
 } from "@/lib/directa-preprocess";
-import { resolveIsin } from "@/lib/isin";
 
 type DirectaBatchSummary = {
   id: number;
@@ -29,6 +28,8 @@ export type DirectaSourceData = {
 
 export type DirectaSyncResult = DirectaBatchSummary & {
   fileHash: string;
+  transactions: RawRow[];
+  positions: PositionPriceRow[];
 };
 
 export type DirectaDuplicateCheck = {
@@ -44,10 +45,6 @@ export type DirectaDuplicateCheck = {
 
 function sha256(value: string): string {
   return crypto.createHash("sha256").update(value).digest("hex");
-}
-
-function stableHash(value: unknown): string {
-  return sha256(JSON.stringify(value));
 }
 
 export function canonicalCsvFilename(filename: string): string {
@@ -82,53 +79,8 @@ function dateOnly(value: Date | string | null | undefined): string | null {
   return value.includes("T") ? value.split("T")[0] : value;
 }
 
-function dbDate(value: Date | string | null | undefined): Date | null {
-  const text = dateOnly(value);
-  return text ? parseDateOnly(text) : null;
-}
-
 function hasLendingOrCollateralRows(content: string): boolean {
   return /fondi a garanzia|titoli prestati|titoli resi|totale/i.test(content);
-}
-
-function transactionHash(canonicalFilename: string, rowNumber: number, row: RawRow): string {
-  return stableHash({
-    kind: "directa_transaction",
-    canonicalFilename,
-    rowNumber,
-    date: formatDateOnly(row.date),
-    settlement: dateOnly(row.settlement),
-    security: row.security,
-    reference: row.reference,
-    type: row.type,
-    price: row.price,
-    currency: row.currency,
-    quantity: row.quantity,
-    amount: row.amount,
-    commission: row.commission,
-  });
-}
-
-function positionHash(canonicalFilename: string, rowNumber: number, row: PositionPriceRow): string {
-  return stableHash({
-    kind: "directa_position",
-    canonicalFilename,
-    rowNumber,
-    fileDate: dateOnly(row.fileDate),
-    security: row.security,
-    quantity: row.quantity,
-    price: row.price,
-    marketValue: row.marketValue,
-  });
-}
-
-function cashHash(canonicalFilename: string, monthEnd: string | null, statementCash: number): string {
-  return stableHash({
-    kind: "directa_cash_balance",
-    canonicalFilename,
-    monthEnd,
-    statementCash,
-  });
 }
 
 function latestFileDate(rows: RawRow[], fallback: string | null): Date | null {
@@ -216,61 +168,6 @@ export async function syncDirectaCsvFile({
     select: { id: true },
   });
 
-  if (transactionRows.length > 0) {
-    await prisma.directa_transactions.createMany({
-      data: transactionRows.map((row, index) => ({
-        upload_batch_id: batch.id,
-        row_number: index + 1,
-        row_hash: transactionHash(canonicalFilename, index + 1, row),
-        source_file: canonicalFilename,
-        file_date: dbDate(row.fileDate),
-        trade_date: dbDate(row.date)!,
-        settlement_date: dbDate(row.settlement),
-        security_name: row.security,
-        reference: row.reference,
-        transaction_type: row.type,
-        tipo: row.tipo,
-        price: row.price,
-        currency: row.currency || "EUR",
-        quantity: row.quantity,
-        amount: row.amount,
-        commission: row.commission,
-      })),
-      skipDuplicates: true,
-    });
-  }
-
-  if (positionRows.length > 0) {
-    await prisma.directa_positions.createMany({
-      data: positionRows.map((row, index) => ({
-        upload_batch_id: batch.id,
-        row_number: index + 1,
-        row_hash: positionHash(canonicalFilename, index + 1, row),
-        source_file: canonicalFilename,
-        file_date: dbDate(row.fileDate),
-        month_end: effectiveMonthEnd ? parseDateOnly(effectiveMonthEnd) : dbDate(row.fileDate),
-        security_name: row.security,
-        quantity: row.quantity,
-        price: row.price,
-        market_value: row.marketValue,
-      })),
-      skipDuplicates: true,
-    });
-  }
-
-  if (statementCash !== null) {
-    await prisma.directa_cash_balances.createMany({
-      data: [{
-        upload_batch_id: batch.id,
-        row_hash: cashHash(canonicalFilename, effectiveMonthEnd, statementCash),
-        source_file: canonicalFilename,
-        month_end: effectiveMonthEnd ? parseDateOnly(effectiveMonthEnd) : cutoff,
-        statement_cash: statementCash,
-      }],
-      skipDuplicates: true,
-    });
-  }
-
   return {
     id: Number(batch.id),
     filename: fileName,
@@ -281,6 +178,8 @@ export async function syncDirectaCsvFile({
     statementCash,
     hasLendingOrCollateralRows: hasLendingOrCollateralRows(content),
     fileHash,
+    transactions: transactionRows,
+    positions: positionRows,
   };
 }
 
@@ -348,90 +247,27 @@ export async function checkDirectaCsvDuplicate({
   };
 }
 
-export async function readDirectaSourceDataAfterCutoff(
-  previousCutoffDate: string | null,
-  batchIds?: number[]
-): Promise<DirectaSourceData> {
-  const prisma = getPrisma();
-  if (batchIds && batchIds.length === 0) {
-    return { batches: [], transactions: [], positions: [] };
-  }
+export function buildDirectaSourceData(
+  syncedFiles: DirectaSyncResult[],
+  previousCutoffDate: string | null
+): DirectaSourceData {
   const cutoff = previousCutoffDate ? parseDateOnly(previousCutoffDate) : null;
-  const batches = await prisma.directa_upload_batches.findMany({
-    where: {
-      ...(batchIds && batchIds.length > 0
-        ? { id: { in: batchIds.map((id) => BigInt(id)) } }
-        : {}),
-      status: "imported",
-      ...(cutoff
-        ? { OR: [{ month_end: null }, { month_end: { gt: cutoff } }] }
-        : {}),
-    },
-    orderBy: [{ month_end: "asc" }, { uploaded_at: "asc" }, { filename: "asc" }],
-    select: {
-      id: true,
-      filename: true,
-      canonical_filename: true,
-      month_end: true,
-      transaction_row_count: true,
-      position_row_count: true,
-      statement_cash: true,
-      has_lending_or_collateral_rows: true,
-    },
+  const included = syncedFiles.filter((file) => {
+    if (!cutoff || !file.monthEnd) return true;
+    return parseDateOnly(file.monthEnd) > cutoff;
   });
-
-  const batchDbIds = batches.map((batch) => batch.id);
-  if (batchDbIds.length === 0) {
-    return { batches: [], transactions: [], positions: [] };
-  }
-
-  const [transactions, positions] = await Promise.all([
-    prisma.directa_transactions.findMany({
-      where: { upload_batch_id: { in: batchDbIds } },
-      orderBy: [{ upload_batch_id: "asc" }, { row_number: "asc" }],
-    }),
-    prisma.directa_positions.findMany({
-      where: { upload_batch_id: { in: batchDbIds } },
-      orderBy: [{ month_end: "asc" }, { upload_batch_id: "asc" }, { row_number: "asc" }],
-    }),
-  ]);
-
   return {
-    batches: batches.map((batch) => ({
-      id: Number(batch.id),
-      filename: batch.filename,
-      canonicalFilename: batch.canonical_filename,
-      monthEnd: dateOnly(batch.month_end),
-      statementRows: batch.transaction_row_count,
-      positionRows: batch.position_row_count,
-      statementCash: batch.statement_cash,
-      hasLendingOrCollateralRows: batch.has_lending_or_collateral_rows,
+    batches: included.map((file) => ({
+      id: file.id,
+      filename: file.filename,
+      canonicalFilename: file.canonicalFilename,
+      monthEnd: file.monthEnd,
+      statementRows: file.statementRows,
+      positionRows: file.positionRows,
+      statementCash: file.statementCash,
+      hasLendingOrCollateralRows: file.hasLendingOrCollateralRows,
     })),
-    transactions: transactions.map((row): RawRow => ({
-      sourceFile: row.source_file,
-      rowNumber: row.row_number,
-      fileDate: dbDate(row.file_date),
-      date: dbDate(row.trade_date)!,
-      settlement: dbDate(row.settlement_date),
-      security: row.security_name,
-      isin: resolveIsin(row.security_name, row.reference),
-      reference: row.reference,
-      price: row.price,
-      currency: row.currency,
-      quantity: row.quantity,
-      amount: row.amount,
-      commission: row.commission,
-      type: row.transaction_type,
-      tipo: row.tipo as RawRow["tipo"],
-    })),
-    positions: positions.map((row): PositionPriceRow => ({
-      sourceFile: row.source_file,
-      fileDate: dbDate(row.file_date),
-      security: row.security_name,
-      isin: resolveIsin(row.security_name),
-      quantity: row.quantity,
-      price: row.price,
-      marketValue: row.market_value,
-    })),
+    transactions: included.flatMap((file) => file.transactions),
+    positions: included.flatMap((file) => file.positions),
   };
 }

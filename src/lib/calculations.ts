@@ -1,5 +1,5 @@
-import type { WorkbookData } from "./excel-loader";
-import { INCOME_TYPES } from "./excel-loader";
+import type { WorkbookData } from "./workbook-data";
+import { INCOME_TYPES } from "./workbook-data";
 import { resolveIsin } from "./isin";
 import type {
   KPIs,
@@ -115,7 +115,7 @@ export function computeKPIs(data: WorkbookData, settings: Settings): KPIs {
   const pctSinceEntry = committed > 0 ? (nav - committed) / committed : 0;
 
   // MOIC = (NAV + total income received) / capital_committed
-  // Distributed income has left the portfolio, so must be added back (matches CEO reference)
+  // Distributed income has left the portfolio, so it must be added back to MOIC.
   const moic = committed > 0 ? (nav + totalIncome) / committed : 0;
 
   const currentYield = nav > 0 ? totalIncome / nav : 0;
@@ -204,8 +204,8 @@ export function computeIRR(data: WorkbookData): IRRData {
 
   let investorIrr: number | null = null;
 
-  // If the tracker's IRR schedule already includes terminal NAV, trust its
-  // official workbook IRR. Otherwise compute XIRR by appending terminal NAV.
+  // If the source IRR schedule already includes terminal NAV, trust its
+  // official IRR. Otherwise compute XIRR by appending terminal NAV.
   if (data.irrInvestor.length >= 1) {
     const cfs = data.irrInvestor.map((r) => ({ date: r.date, amount: r.cashFlow }));
     if (hasTerminalValue(cfs, data.cutoffDate, nav) && precomputedInvestorIrr !== null) {

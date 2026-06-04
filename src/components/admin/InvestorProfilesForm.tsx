@@ -140,7 +140,7 @@ export function InvestorProfilesForm({ profiles, currentNavUnit }: Props) {
         </div>
         <div className="p-5 space-y-3">
           <p className="text-xs text-muted-foreground">
-            Investor profiles come from the tracker context upload on the Upload Data page. This page is only for manual corrections or investor-specific entries that are not in Directa.
+            Investor profiles are maintained here and are applied to each published snapshot. Directa does not provide investor-level subscription data.
           </p>
           <Link
             href="/admin/upload"
@@ -295,7 +295,7 @@ export function InvestorProfilesForm({ profiles, currentNavUnit }: Props) {
             <div className="flex flex-col items-center justify-center py-14 gap-3">
               <Users className="w-10 h-10 text-muted-foreground/20" />
               <p className="text-sm text-muted-foreground">No investors yet</p>
-              <p className="text-xs text-muted-foreground/60">Upload tracker context or add manually</p>
+              <p className="text-xs text-muted-foreground/60">Add investor profiles manually</p>
             </div>
           ) : (
             <div className="divide-y divide-border/40 max-h-[460px] overflow-y-auto">

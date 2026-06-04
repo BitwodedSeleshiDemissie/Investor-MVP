@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import type { WorkbookData } from "./excel-loader";
+import type { WorkbookData } from "./workbook-data";
 
 // Prefix formula-trigger characters so Excel/Sheets cannot execute injected formulas (F-16)
 function escapeCell(value: unknown): unknown {

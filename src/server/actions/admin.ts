@@ -240,7 +240,7 @@ export const saveNonListedValues = adminAction
     if (!dbEnabled()) return { error: "Database not configured" };
     const prisma = getPrisma();
     const investee = parsedInput.investee.trim();
-    const itemKey = `TRACKER_PARTICIPATION_${slugKey(investee)}`;
+    const itemKey = `PRIVATE_PARTICIPATION_${slugKey(investee)}`;
 
     const latest = await prisma.admin_manual_values.findFirst({
       where: { item_key: itemKey },
@@ -299,10 +299,10 @@ export const savePrivateLoanPrincipal = adminAction
     if (!dbEnabled()) return { error: "Database not configured" };
     const prisma = getPrisma();
     const counterparty = parsedInput.counterparty.trim();
-    const itemKey = `TRACKER_LOAN_${slugKey(counterparty)}`;
+    const itemKey = `PRIVATE_LOAN_${slugKey(counterparty)}`;
 
     const hasDetailedLoans = await prisma.admin_manual_values.findFirst({
-      where: { item_key: { startsWith: "TRACKER_LOAN_" } },
+      where: { item_key: { startsWith: "PRIVATE_LOAN_" } },
       select: { value: true },
     });
     const latest = await prisma.admin_manual_values.findFirst({

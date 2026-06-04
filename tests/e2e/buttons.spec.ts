@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import fs from "fs";
 import path from "path";
-import { Client } from "pg";
+import { getTestPrisma } from "./prisma-test-client";
 
 type Env = Record<string, string>;
 
@@ -11,6 +11,7 @@ const adminPassword = process.env.E2E_ADMIN_PASSWORD ?? "admintest";
 const investorEmail = process.env.E2E_INVESTOR_EMAIL ?? "osy@arietecapital.com";
 const investorPassword = process.env.E2E_INVESTOR_PASSWORD ?? "osy123";
 const databaseUrl = process.env.DATABASE_URL ?? env.DATABASE_URL;
+const databaseSsl = process.env.DATABASE_SSL ?? env.DATABASE_SSL;
 
 const stamp = Date.now().toString();
 const nonListedKey = `E2E_BUTTON_NL_${stamp}`;
@@ -150,21 +151,16 @@ async function addDictionaryItem(page: Page, itemKey: string, displayName: strin
 
 async function cleanup() {
   if (!databaseUrl) return;
-  const client = new Client({
-    connectionString: databaseUrl,
-    ssl: env.DATABASE_SSL === "true" || process.env.DATABASE_SSL === "true" ? { rejectUnauthorized: false } : undefined,
+  const prisma = await getTestPrisma(databaseUrl, databaseSsl);
+  const itemKeys = [nonListedKey, cashKey];
+  await prisma.admin_manual_values.deleteMany({ where: { item_key: { in: itemKeys } } });
+  await prisma.asset_dictionary.deleteMany({ where: { item_key: { in: itemKeys } } });
+  await prisma.admin_controls.deleteMany({
+    where: {
+      as_of_date: new Date(`${testDate}T00:00:00.000Z`),
+      capital_committed: controlValue,
+    },
   });
-  await client.connect();
-  try {
-    await client.query("DELETE FROM admin_manual_values WHERE item_key = ANY($1::text[])", [[nonListedKey, cashKey]]);
-    await client.query("DELETE FROM asset_dictionary WHERE item_key = ANY($1::text[])", [[nonListedKey, cashKey]]);
-    await client.query(
-      "DELETE FROM admin_controls WHERE as_of_date = $1::date AND capital_committed = $2::numeric",
-      [testDate, controlValue]
-    );
-  } finally {
-    await client.end();
-  }
 }
 
 function loadLocalEnv(): Env {
