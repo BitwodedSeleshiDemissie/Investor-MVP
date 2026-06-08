@@ -4,7 +4,7 @@ import path from "node:path";
 import * as XLSX from "xlsx";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { buildAuditWorkbookBuffer } from "./audit-workbook";
-import { computeComposition, computeKPIs, computeRisk } from "./calculations";
+import { computeComposition, computeDistributions, computeKPIs, computeRisk } from "./calculations";
 
 const marchStatement = `"Ariete Capital S.r.l.";2/04/2026;18:46:57
 "Estratto Conto   dal";1/03/2026;"al";31/03/2026
@@ -53,6 +53,13 @@ describe("Statement preprocessing MVP flow", () => {
     vi.stubEnv("JWT_SECRET", "test-secret-at-least-sixteen-chars");
     vi.stubEnv("DATABASE_URL", "");
     vi.stubEnv("DATABASE_SSL", "false");
+  });
+
+  it("dates Directa statements from Ec31 filenames and statement headers", async () => {
+    const { parseCsvFile } = await import("./directa-preprocess");
+
+    expect(dateOnly(parseCsvFile(aprilStatement, "Ec31_04_2026.csv")[0].fileDate!)).toBe("2026-04-30");
+    expect(dateOnly(parseCsvFile(aprilStatement, "generic-upload.csv")[0].fileDate!)).toBe("2026-04-30");
   });
 
   it("builds a portfolio snapshot from uploaded CSV history without old Python or Excel files", async () => {
@@ -153,6 +160,15 @@ describe("Statement preprocessing MVP flow", () => {
               weight: 1,
             },
           ],
+          kpis: { totalIncome: 20, distributionsTotal: 20 },
+          distributions: [
+            {
+              date: "2026-03-15",
+              security: "ENEL",
+              incomeType: "Dividend",
+              amount: 20,
+            },
+          ],
         },
       }
     );
@@ -173,8 +189,14 @@ describe("Statement preprocessing MVP flow", () => {
     expect(workbook.portfolioMetrics["Statement Cash"]).toBeCloseTo(10_263, 6);
     expect(workbook.portfolioMetrics["Listed Market Value"]).toBeCloseTo(860, 6);
     expect(workbook.portfolioMetrics["Total Portfolio Value"]).toBeCloseTo(11_123, 6);
+    expect(workbook.portfolioMetrics["Total Income (Div+Cpn+Dist)"]).toBeCloseTo(30, 6);
     expect(workbook.monthlyReturns).toHaveLength(2);
     expect(workbook.monthlyReturns.at(-1)?.monthlyReturn).toBeCloseTo(11_123 / 11_015 - 1, 8);
+
+    const distributions = computeDistributions(workbook);
+    expect(distributions.map((d) => d.amount)).toEqual(expect.arrayContaining([20, 10]));
+    expect(computeKPIs(workbook, settings).distributionsCount).toBe(2);
+    expect(computeKPIs(workbook, settings).distributionsTotal).toBeCloseTo(30, 6);
   });
 
   it("keeps Directa income gross by classifying withholding rows as tax", async () => {

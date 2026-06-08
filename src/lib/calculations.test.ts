@@ -233,6 +233,25 @@ describe("computeIRR", () => {
     expect(irr.investorIrr).toBeCloseTo(-0.02091006934642792, 6);
     expect(irr.fundIrr).toBeCloseTo(-0.02091006934642792, 6);
   });
+
+  it("does not derive fund IRR from brokerage trade cashflows without an official IRR schedule", () => {
+    const data = makeWorkbook({
+      irrInvestor: [],
+      irrPortfolio: [
+        { date: d(2026, 3, 1), cashFlow: -1_000 },
+        { date: d(2026, 3, 15), cashFlow: 50 },
+      ],
+    });
+    delete data.portfolioMetrics["Investor IRR"];
+    delete data.portfolioMetrics["IRR Investor"];
+    delete data.portfolioMetrics["Company IRR"];
+    delete data.portfolioMetrics["Fund IRR"];
+
+    const irr = computeIRR(data);
+
+    expect(irr.investorIrr).toBeNull();
+    expect(irr.fundIrr).toBeNull();
+  });
 });
 
 describe("computeRisk", () => {

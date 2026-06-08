@@ -222,13 +222,6 @@ export function computeIRR(data: WorkbookData): IRRData {
   }
 
   let fundIrr = pmIrr(data, "Fund IRR", "Company IRR");
-  if (fundIrr === null && data.irrPortfolio.length >= 1) {
-    const cfs = data.irrPortfolio.map((r) => ({ date: r.date, amount: r.cashFlow }));
-    if (!hasTerminalValue(cfs, data.cutoffDate, nav)) {
-      cfs.push({ date: data.cutoffDate, amount: nav });
-    }
-    fundIrr = xirrSafe(cfs);
-  }
   if (fundIrr === null) fundIrr = investorIrr;
 
   return { fundIrr, investorIrr, valuationDate };

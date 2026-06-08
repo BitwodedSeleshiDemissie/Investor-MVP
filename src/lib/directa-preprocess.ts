@@ -1,8 +1,8 @@
 // Ports preprocess.py: statement CSV exports -> WorkbookData (in-memory, no Excel round-trip).
 // The resulting WorkbookData is fed directly into the existing calculations.ts functions.
 
-import type { WorkbookData, HoldingRow, CashFlowRow, MonthlyReturnRow } from "./workbook-data";
-import type { Holding, NavPoint } from "@/types/portfolio";
+import type { WorkbookData, HoldingRow, CashFlowRow, MonthlyReturnRow, TradeRow } from "./workbook-data";
+import type { DistributionEvent, Holding, KPIs, NavPoint } from "@/types/portfolio";
 import { dbEnabled, getPrisma } from "@/db/prisma";
 import { resolveIsin } from "./isin";
 
@@ -261,6 +261,36 @@ function parseItalianDate(value: string): Date | null {
   return null;
 }
 
+function statementMonthEndFromFilename(filename: string): Date | null {
+  const m1 = filename.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (m1) {
+    return new Date(parseInt(m1[1], 10), parseInt(m1[2], 10) - 1, parseInt(m1[3], 10));
+  }
+
+  const m2 = filename.match(/Ec(?:_?30|_?31)?_(\d{1,2})_(\d{4})/i);
+  if (m2) {
+    const month = parseInt(m2[1], 10);
+    const year = parseInt(m2[2], 10);
+    return new Date(year, month, 0);
+  }
+
+  return null;
+}
+
+function statementMonthEndFromHeader(lines: string[]): Date | null {
+  const periodLine = lines.find((line) => /Estratto\s+Conto/i.test(line) && /;["']?al["']?;/i.test(line));
+  if (!periodLine) return null;
+
+  const parts = splitSemicolon(periodLine).map((part) => part.trim().replace(/^"|"$/g, ""));
+  const alIndex = parts.findIndex((part) => part.toLowerCase() === "al");
+  const candidates = alIndex >= 0 ? parts.slice(alIndex + 1) : parts;
+  for (const candidate of candidates) {
+    const parsed = parseItalianDate(candidate);
+    if (parsed) return parsed;
+  }
+  return null;
+}
+
 // Ports get_transaction_type
 function getTransactionType(
   security: string,
@@ -317,22 +347,8 @@ type PositionMap = Map<string, PositionPriceRow>;
 
 // Ports read_csv_files (single file variant)
 export function parseCsvFile(content: string, filename: string): RawRow[] {
-  // Detect file date from filename: "Estratto Conto YYYY-MM-DD.csv" or "Ec30_MM_YYYY.csv"
-  let fileDate: Date | null = null;
-  const m1 = filename.match(/(\d{4})-(\d{2})-(\d{2})/);
-  if (m1) {
-    fileDate = new Date(parseInt(m1[1]), parseInt(m1[2]) - 1, parseInt(m1[3]));
-  } else {
-    const m2 = filename.match(/Ec30_(\d{1,2})_(\d{4})/i);
-    if (m2) {
-      const month = parseInt(m2[1]);
-      const year = parseInt(m2[2]);
-      // Use last day of that month
-      fileDate = new Date(year, month, 0);
-    }
-  }
-
   const lines = content.split(/\r?\n/);
+  const fileDate = statementMonthEndFromFilename(filename) ?? statementMonthEndFromHeader(lines);
   // Skip 4-line preamble (company info, period, blank, headers); data starts at index 4.
   const rows: RawRow[] = [];
   for (let i = 4; i < lines.length; i++) {
@@ -791,6 +807,37 @@ export interface PreviousSnapshotInput {
   totalPortfolioValue: number;
   holdings: Holding[];
   timeseries: NavPoint[];
+  kpis?: Pick<KPIs, "totalIncome" | "distributionsTotal"> | null;
+  distributions?: DistributionEvent[] | null;
+}
+
+function previousIncomeTotal(snapshot: PreviousSnapshotInput | undefined): number {
+  if (!snapshot) return 0;
+  const metric = Number(snapshot.kpis?.totalIncome ?? snapshot.kpis?.distributionsTotal);
+  if (Number.isFinite(metric) && metric > 0) return metric;
+  return (snapshot.distributions ?? []).reduce((sum, distribution) => {
+    const amount = Number(distribution.amount);
+    return Number.isFinite(amount) && amount > 0 ? sum + amount : sum;
+  }, 0);
+}
+
+function previousDistributionTradeRows(snapshot: PreviousSnapshotInput | undefined): TradeRow[] {
+  if (!snapshot?.distributions?.length) return [];
+  return snapshot.distributions.flatMap((distribution): TradeRow[] => {
+    const amount = Number(distribution.amount);
+    const date = parseDateOnly(distribution.date);
+    if (!Number.isFinite(amount) || amount <= 0 || !Number.isFinite(date.getTime())) return [];
+    return [{
+      date,
+      security: distribution.security,
+      assetClass: "Income",
+      currency: "EUR",
+      type: distribution.incomeType || "Income",
+      shares: 0,
+      price: 0,
+      netAmount: amount,
+    }];
+  });
 }
 
 export async function buildWorkbookDataFromParsedRows(
@@ -842,7 +889,8 @@ export async function buildWorkbookDataFromParsedRows(
   const coupons = tradeRows.filter((r) => r.type === "Coupon").reduce((s, r) => s + val(r.amount) + val(r.commission), 0);
   const distributions = tradeRows.filter((r) => r.type === "Distribution").reduce((s, r) => s + val(r.amount) + val(r.commission), 0);
   const lending = tradeRows.filter((r) => r.type === "Sec. Lending").reduce((s, r) => s + val(r.amount) + val(r.commission), 0);
-  const totalIncome = dividends + coupons + distributions + lending;
+  const incrementalIncome = dividends + coupons + distributions + lending;
+  const totalIncome = previousIncomeTotal(overlays.previousSnapshot ?? undefined) + incrementalIncome;
 
   const invested = tradeRows.filter((r) => r.type === "Deposit").reduce((s, r) => s + val(r.amount), 0);
   const withdrawals = Math.abs(tradeRows.filter((r) => r.type === "Withdrawal").reduce((s, r) => s + val(r.amount), 0));
@@ -876,7 +924,7 @@ export async function buildWorkbookDataFromParsedRows(
   const irrPortfolio = buildPortfolioIrrFlows(tradeRows);
 
   // Step 11: Trade log for computeDistributions / computeKPIs
-  const tradeLog = tradeRows
+  const currentTradeLog = tradeRows
     .filter((r) => r.type !== "Balance")
     .map((r) => ({
       date: r.date,
@@ -895,6 +943,10 @@ export async function buildWorkbookDataFromParsedRows(
         return a + c;
       })(),
     }));
+  const tradeLog = [
+    ...previousDistributionTradeRows(overlays.previousSnapshot ?? undefined),
+    ...currentTradeLog,
+  ].sort((a, b) => a.date.getTime() - b.date.getTime());
 
   // portfolioMetrics: populate all keys that calculations.ts looks up
   const portfolioMetrics: Record<string, number | string> = {

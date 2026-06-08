@@ -363,11 +363,12 @@ export async function POST(req: NextRequest) {
 
   for (const file of csvUploadFiles) {
     const content = await file.text();
+    const csvMonthEnd = monthEndFromFilename(file.name) ?? selectedCutoffDate;
     uploadedCsvs.push(classifyUploadedCsv(file.name, content));
     const synced = await syncDirectaCsvFile({
       fileName: file.name,
       content,
-      monthEnd: selectedCutoffDate,
+      monthEnd: csvMonthEnd,
       uploadedBy: session.email ?? "admin",
     });
     csvFilenames.push(synced.canonicalFilename);
@@ -445,6 +446,11 @@ export async function POST(req: NextRequest) {
               totalPortfolioValue: previousSnapshot.kpis.totalPortfolioValue,
               holdings: previousSnapshot.holdings,
               timeseries: previousSnapshot.timeseries,
+              kpis: {
+                totalIncome: previousSnapshot.kpis.totalIncome,
+                distributionsTotal: previousSnapshot.kpis.distributionsTotal,
+              },
+              distributions: previousSnapshot.distributions,
             }
           : null,
       }
@@ -517,6 +523,9 @@ export async function POST(req: NextRequest) {
       const irrAnnualized = yearsElapsed > 0 && moic > 0 ? Math.pow(moic, 1 / yearsElapsed) - 1 : 0;
       return { name: p.name, type: p.investor_type, subscriptionDate, capitalEur, units, yearsElapsed, navUnitAtSub: p.nav_unit_at_sub, currentValueEur, moic, irrAnnualized };
     });
+  } else {
+    payload.irr.fundIrr = null;
+    payload.irr.investorIrr = null;
   }
 
   const sourceRecordedAt = new Date().toISOString();

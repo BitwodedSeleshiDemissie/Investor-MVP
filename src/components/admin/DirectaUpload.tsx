@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AlertCircle, CheckCircle2, FileSpreadsheet, Loader2, Upload, X } from "lucide-react";
+import { AlertCircle, Calendar, CheckCircle2, ChevronLeft, ChevronRight, FileSpreadsheet, Loader2, Upload, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 type ManualItem = {
@@ -69,6 +69,30 @@ function currentYearMonth(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
+function shiftMonth(ym: string, offset: number): string {
+  const [year, month] = ym.split("-").map(Number);
+  const d = new Date(year, month - 1 + offset, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function formatMonthLabel(ym: string): string {
+  const [year, month] = ym.split("-").map(Number);
+  return new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" }).format(
+    new Date(year, month - 1, 1)
+  );
+}
+
+function formatShortMonthLabel(ym: string): string {
+  const [year, month] = ym.split("-").map(Number);
+  return new Intl.DateTimeFormat("en-US", { month: "short", year: "numeric" }).format(
+    new Date(year, month - 1, 1)
+  );
+}
+
+function adjacentMonths(anchor: string): string[] {
+  return [shiftMonth(anchor, -1), anchor, shiftMonth(anchor, 1)];
+}
+
 function parseAiSummary(summary: string): { bullets: string[]; verdict: string } {
   const lines = summary
     .split("\n")
@@ -91,6 +115,7 @@ export function DirectaUpload() {
   const router = useRouter();
   const csvInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
+  const monthInputRef = useRef<HTMLInputElement>(null);
 
   const [selectedMonth, setSelectedMonth] = useState(currentYearMonth());
   const [files, setFiles] = useState<File[]>([]);
@@ -102,6 +127,23 @@ export function DirectaUpload() {
   const [result, setResult] = useState<ConfirmResult | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [duplicatePrompt, setDuplicatePrompt] = useState<DuplicatePrompt | null>(null);
+
+  function setMonth(ym: string) {
+    if (/^\d{4}-\d{2}$/.test(ym)) setSelectedMonth(ym);
+  }
+
+  function openMonthPicker() {
+    const picker = monthInputRef.current as (HTMLInputElement & { showPicker?: () => void }) | null;
+    if (!picker?.showPicker) {
+      monthInputRef.current?.focus();
+      return;
+    }
+    try {
+      picker.showPicker();
+    } catch {
+      monthInputRef.current?.focus();
+    }
+  }
 
   useEffect(() => {
     fetch("/api/admin/manual-defaults")
@@ -318,12 +360,61 @@ export function DirectaUpload() {
         <label className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
           Snapshot month
         </label>
-        <input
-          type="month"
-          value={selectedMonth}
-          onChange={(e) => setSelectedMonth(e.target.value)}
-          className="rounded-xl border border-border/60 bg-card px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
-        />
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setMonth(shiftMonth(selectedMonth, -1))}
+            className="grid h-10 w-10 place-items-center rounded-lg border border-border/60 bg-card text-muted-foreground transition-colors hover:bg-secondary/40 hover:text-foreground"
+            aria-label="Previous month"
+            title="Previous month"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={openMonthPicker}
+            className="flex h-10 min-w-[12rem] items-center justify-center gap-2 rounded-lg border border-border/60 bg-card px-4 text-sm font-semibold text-foreground transition-colors hover:bg-secondary/40"
+          >
+            <Calendar className="h-4 w-4 text-muted-foreground" />
+            {formatMonthLabel(selectedMonth)}
+          </button>
+          <button
+            type="button"
+            onClick={() => setMonth(shiftMonth(selectedMonth, 1))}
+            className="grid h-10 w-10 place-items-center rounded-lg border border-border/60 bg-card text-muted-foreground transition-colors hover:bg-secondary/40 hover:text-foreground"
+            aria-label="Next month"
+            title="Next month"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+          <input
+            ref={monthInputRef}
+            type="month"
+            value={selectedMonth}
+            onChange={(e) => setMonth(e.target.value)}
+            className="sr-only"
+            aria-label="Snapshot month"
+          />
+        </div>
+        <div className="grid max-w-2xl grid-cols-3 gap-2">
+          {adjacentMonths(currentYearMonth()).map((month) => {
+            const selected = month === selectedMonth;
+            return (
+              <button
+                key={month}
+                type="button"
+                onClick={() => setMonth(month)}
+                className={`h-9 rounded-lg border px-2 text-xs font-semibold transition-colors ${
+                  selected
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "border-border/60 bg-card text-muted-foreground hover:bg-secondary/40 hover:text-foreground"
+                }`}
+              >
+                {formatShortMonthLabel(month)}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

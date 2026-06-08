@@ -58,7 +58,7 @@ export function directaFileHash(content: string): string {
 export function monthEndFromFilename(filename: string): string | null {
   const m1 = filename.match(/(\d{4})-(\d{2})-(\d{2})/);
   if (m1) return `${m1[1]}-${m1[2]}-${m1[3]}`;
-  const m2 = filename.match(/Ec(?:_X|30)?_(\d{1,2})_(\d{4})/i);
+  const m2 = filename.match(/Ec(?:_?30|_?31)?_(\d{1,2})_(\d{4})/i);
   if (m2) {
     const month = parseInt(m2[1], 10);
     const year = parseInt(m2[2], 10);
@@ -104,10 +104,13 @@ export async function syncDirectaCsvFile({
   const canonicalFilename = canonicalCsvFilename(fileName);
   const effectiveMonthEnd = monthEnd ?? monthEndFromFilename(fileName);
   const fileHash = directaFileHash(content);
-  const transactionRows = parseCsvFile(content, canonicalFilename);
-  const positionRows = parsePositionCsvFile(content, canonicalFilename).filter(
-    (row) => row.quantity > 0 || row.marketValue > 0
-  );
+  const fallbackFileDate = effectiveMonthEnd ? parseDateOnly(effectiveMonthEnd) : null;
+  const transactionRows = parseCsvFile(content, canonicalFilename).map((row) => (
+    row.fileDate || !fallbackFileDate ? row : { ...row, fileDate: fallbackFileDate }
+  ));
+  const positionRows = parsePositionCsvFile(content, canonicalFilename)
+    .filter((row) => row.quantity > 0 || row.marketValue > 0)
+    .map((row) => (row.fileDate || !fallbackFileDate ? row : { ...row, fileDate: fallbackFileDate }));
   const cutoff = latestFileDate(transactionRows, effectiveMonthEnd);
   const statementCash = transactionRows.length > 0 && cutoff
     ? getCashAtCutoff(transactionRows, cutoff)

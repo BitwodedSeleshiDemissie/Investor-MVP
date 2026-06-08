@@ -15,6 +15,7 @@ vi.mock("@/db/prisma", () => ({
 import {
   buildDirectaSourceData,
   checkDirectaCsvDuplicate,
+  monthEndFromFilename,
   type DirectaSyncResult,
 } from "../server/directa-ingestion";
 
@@ -65,6 +66,12 @@ describe("Directa ingestion duplicate checks", () => {
     expect(mockPrismaClient.directa_upload_batches.findMany).not.toHaveBeenCalled();
   });
 
+  it("detects month end from Directa statement filename variants", () => {
+    expect(monthEndFromFilename("Ec31_03_2026.csv")).toBe("2026-03-31");
+    expect(monthEndFromFilename("Ec30_04_2026.csv")).toBe("2026-04-30");
+    expect(monthEndFromFilename("Estratto Conto 2026-04-30.csv")).toBe("2026-04-30");
+  });
+
   it("filters out uploads that do not advance beyond the previous cutoff", () => {
     const result = buildDirectaSourceData(
       [makeSyncedUpload({ id: 12, monthEnd: "2026-02-28" })],
@@ -73,6 +80,29 @@ describe("Directa ingestion duplicate checks", () => {
 
     expect(result).toEqual({ batches: [], transactions: [], positions: [] });
     expect(mockPrismaClient.directa_upload_batches.findMany).not.toHaveBeenCalled();
+  });
+
+  it("includes only the newly advanced statement when old history is reuploaded with a current snapshot", () => {
+    const march = makeSyncedUpload({
+      id: 12,
+      filename: "Estratto Conto 2026-03-31.csv",
+      canonicalFilename: "Estratto Conto 2026-03-31.csv",
+      monthEnd: "2026-03-31",
+    });
+    const april = makeSyncedUpload({
+      id: 13,
+      filename: "Estratto Conto 2026-04-30.csv",
+      canonicalFilename: "Estratto Conto 2026-04-30.csv",
+      monthEnd: "2026-04-30",
+    });
+
+    const result = buildDirectaSourceData([march, april], "2026-03-31");
+
+    expect(result.batches).toEqual([
+      expect.objectContaining({ id: 13, canonicalFilename: "Estratto Conto 2026-04-30.csv" }),
+    ]);
+    expect(result.transactions).toHaveLength(1);
+    expect(result.positions).toHaveLength(1);
   });
 });
 
