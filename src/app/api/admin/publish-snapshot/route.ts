@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { dbEnabled, getPrisma } from "@/db/prisma";
 import { getSession } from "@/lib/auth";
 import type { PortfolioSnapshot } from "@/types/portfolio";
+import { canonicalCsvFilename } from "@/server/directa-ingestion";
 
 type ReviewCheck = {
   severity?: string;
@@ -15,6 +16,10 @@ type ApprovedManualItem = {
   value: number;
   display_name: string | null;
   subcategory: string | null;
+};
+
+type DraftAuditReport = {
+  sourceBatchIds?: unknown;
 };
 
 function approvedManualItems(payload: PortfolioSnapshot): ApprovedManualItem[] {
@@ -37,6 +42,25 @@ function normalizeDictionaryType(itemType: string): "Cash" | "Non-Listed" {
 function manualValuationMethod(itemType: string, subcategory: string | null): string {
   if (itemType.toLowerCase() === "cash") return "Approved monthly cash value";
   return subcategory ? `Approved monthly ${subcategory}` : "Approved monthly non-Directa value";
+}
+
+function csvSourceFiles(payload: PortfolioSnapshot, sourceFile: string): string[] {
+  const payloadFiles = payload.dataFreshness?.sourceFiles ?? [];
+  const sourceFiles = payloadFiles.length > 0 ? payloadFiles : sourceFile.split(",").map((file) => file.trim());
+  return [...new Set(
+    sourceFiles
+      .filter((file) => file.toLowerCase().endsWith(".csv"))
+      .map((file) => canonicalCsvFilename(file))
+  )];
+}
+
+function auditSourceBatchIds(auditReport: unknown): bigint[] {
+  const raw = (auditReport as DraftAuditReport | null)?.sourceBatchIds;
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((value): bigint[] => {
+    const id = Number(value);
+    return Number.isInteger(id) && id > 0 ? [BigInt(id)] : [];
+  });
 }
 
 async function syncApprovedManualItems(
@@ -113,7 +137,7 @@ export async function POST(req: NextRequest) {
   const prisma = getPrisma();
   const draft = await prisma.portfolio_snapshots.findUnique({
     where: { id: BigInt(snapshotId) },
-    select: { id: true, as_of_date: true, publication_status: true, source_file: true, payload: true, deterministic_checks: true },
+    select: { id: true, as_of_date: true, publication_status: true, source_file: true, payload: true, audit_report: true, deterministic_checks: true },
   });
 
   if (!draft) {
@@ -164,6 +188,22 @@ export async function POST(req: NextRequest) {
   const approvedBy = session.email ?? "admin";
   const syncedManualItemCount = await prisma.$transaction(async (tx) => {
     const manualItemCount = await syncApprovedManualItems(tx, payload, new Date(payload.cutoffDate));
+    const sourceBatchIds = auditSourceBatchIds(draft.audit_report);
+    const sourceCsvFiles = csvSourceFiles(payload, draft.source_file ?? "");
+    if (sourceBatchIds.length > 0) {
+      await tx.directa_upload_batches.updateMany({
+        where: { id: { in: sourceBatchIds } },
+        data: { status: "published" },
+      });
+    } else if (sourceCsvFiles.length > 0) {
+      await tx.directa_upload_batches.updateMany({
+        where: {
+          canonical_filename: { in: sourceCsvFiles },
+          status: { not: "superseded" },
+        },
+        data: { status: "published" },
+      });
+    }
     await tx.portfolio_snapshots.update({
       where: { id: BigInt(snapshotId) },
       data: {

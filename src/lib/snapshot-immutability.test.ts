@@ -49,6 +49,9 @@ const mockPrismaClient = {
   directa_csv_files: {
     upsert: vi.fn().mockResolvedValue({}),
   },
+  directa_upload_batches: {
+    updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+  },
 };
 
 vi.mock("@/db/prisma", () => ({ dbEnabled: () => true, getPrisma: () => mockPrismaClient }));
@@ -292,6 +295,7 @@ describe("publish-snapshot route — sourceRecordReady gate", () => {
     );
     mockPrismaClient.portfolio_snapshots.findUnique.mockReset().mockResolvedValue(null);
     mockPrismaClient.portfolio_snapshots.update.mockReset().mockResolvedValue({});
+    mockPrismaClient.directa_upload_batches.updateMany.mockReset().mockResolvedValue({ count: 0 });
     mockPrismaClient.admin_manual_values.create.mockReset().mockResolvedValue({});
     mockPrismaClient.asset_dictionary.upsert.mockReset().mockResolvedValue({});
     vi.mocked(getSession).mockResolvedValue(
@@ -384,6 +388,7 @@ describe("publish-snapshot route — sourceRecordReady gate", () => {
       publication_status: "draft",
       source_file: "Ec31_03_2025.csv, SituazionePatrimoniale_B6166_31032025.pdf",
       payload: sourceRecordPayload,
+      audit_report: { sourceBatchIds: [12] },
       deterministic_checks: [],
     });
 
@@ -423,6 +428,10 @@ describe("publish-snapshot route — sourceRecordReady gate", () => {
         }),
       })
     );
+    expect(mockPrismaClient.directa_upload_batches.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: [BigInt(12)] } },
+      data: { status: "published" },
+    });
   });
 
   it("returns 409 when a blocker check exists (even if source-record)", async () => {

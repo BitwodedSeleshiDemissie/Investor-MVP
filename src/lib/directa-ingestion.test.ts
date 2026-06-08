@@ -6,6 +6,9 @@ const mockPrismaClient = vi.hoisted(() => ({
     findFirst: vi.fn(),
     findMany: vi.fn(),
   },
+  portfolio_snapshots: {
+    findFirst: vi.fn(),
+  },
 }));
 
 vi.mock("@/db/prisma", () => ({
@@ -24,9 +27,10 @@ describe("Directa ingestion duplicate checks", () => {
     mockPrismaClient.directa_upload_batches.findUnique.mockReset().mockResolvedValue(null);
     mockPrismaClient.directa_upload_batches.findFirst.mockReset().mockResolvedValue(null);
     mockPrismaClient.directa_upload_batches.findMany.mockReset().mockResolvedValue([]);
+    mockPrismaClient.portfolio_snapshots.findFirst.mockReset().mockResolvedValue(null);
   });
 
-  it("returns exact_file when the uploaded CSV hash already exists", async () => {
+  it("returns exact_file when the uploaded CSV hash already exists in a published snapshot", async () => {
     mockPrismaClient.directa_upload_batches.findUnique.mockResolvedValueOnce({
       id: BigInt(12),
       filename: "Ec31_03_2026.csv",
@@ -35,6 +39,7 @@ describe("Directa ingestion duplicate checks", () => {
       uploaded_at: new Date("2026-04-01T10:00:00Z"),
       status: "imported",
     });
+    mockPrismaClient.portfolio_snapshots.findFirst.mockResolvedValueOnce({ id: BigInt(1) });
 
     const result = await checkDirectaCsvDuplicate({
       fileName: "Ec31_03_2026.csv",
@@ -52,6 +57,45 @@ describe("Directa ingestion duplicate checks", () => {
       status: "imported",
     });
     expect(mockPrismaClient.directa_upload_batches.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("ignores exact CSV matches that only belong to abandoned drafts", async () => {
+    mockPrismaClient.directa_upload_batches.findUnique.mockResolvedValueOnce({
+      id: BigInt(12),
+      filename: "Ec31_05_2026.csv",
+      canonical_filename: "Ec31_05_2026.csv",
+      month_end: new Date("2026-05-31T00:00:00Z"),
+      uploaded_at: new Date("2026-06-08T10:00:00Z"),
+      status: "imported",
+    });
+    mockPrismaClient.portfolio_snapshots.findFirst.mockResolvedValueOnce(null);
+
+    const result = await checkDirectaCsvDuplicate({
+      fileName: "Ec31_05_2026.csv",
+      content: "same file contents",
+    });
+
+    expect(result).toBeNull();
+    expect(mockPrismaClient.directa_upload_batches.findFirst).toHaveBeenCalled();
+  });
+
+  it("ignores same-name CSV matches that only belong to abandoned drafts", async () => {
+    mockPrismaClient.directa_upload_batches.findFirst.mockResolvedValueOnce({
+      id: BigInt(13),
+      filename: "Ec31_05_2026.csv",
+      canonical_filename: "Ec31_05_2026.csv",
+      month_end: new Date("2026-05-31T00:00:00Z"),
+      uploaded_at: new Date("2026-06-08T10:00:00Z"),
+      status: "imported",
+    });
+    mockPrismaClient.portfolio_snapshots.findFirst.mockResolvedValueOnce(null);
+
+    const result = await checkDirectaCsvDuplicate({
+      fileName: "Ec31_05_2026 (1).csv",
+      content: "corrected contents",
+    });
+
+    expect(result).toBeNull();
   });
 
   it("builds source data from current upload rows without DB row reads", () => {

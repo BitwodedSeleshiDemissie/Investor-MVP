@@ -79,6 +79,40 @@ function dateOnly(value: Date | string | null | undefined): string | null {
   return value.includes("T") ? value.split("T")[0] : value;
 }
 
+async function publishedSnapshotUsesCsv(
+  prisma: ReturnType<typeof getPrisma>,
+  filenames: Array<string | null | undefined>
+): Promise<boolean> {
+  const searchTerms = [...new Set(filenames.filter((filename): filename is string => Boolean(filename)))];
+  if (searchTerms.length === 0) return false;
+
+  const snapshot = await prisma.portfolio_snapshots.findFirst({
+    where: {
+      publication_status: "published",
+      OR: searchTerms.map((filename) => ({ source_file: { contains: filename } })),
+    },
+    select: { id: true },
+  });
+  return snapshot !== null;
+}
+
+async function publishedSnapshotUsesBatch(
+  prisma: ReturnType<typeof getPrisma>,
+  batchId: bigint
+): Promise<boolean> {
+  const snapshot = await prisma.portfolio_snapshots.findFirst({
+    where: {
+      publication_status: "published",
+      audit_report: {
+        path: ["sourceBatchIds"],
+        array_contains: [Number(batchId)],
+      },
+    },
+    select: { id: true },
+  });
+  return snapshot !== null;
+}
+
 function hasLendingOrCollateralRows(content: string): boolean {
   return /fondi a garanzia|titoli prestati|titoli resi|totale/i.test(content);
 }
@@ -209,22 +243,26 @@ export async function checkDirectaCsvDuplicate({
     },
   });
   if (exact) {
-    return {
-      originalFilename: fileName,
-      canonicalFilename: exact.canonical_filename,
-      duplicateKind: "exact_file",
-      batchId: Number(exact.id),
-      filename: exact.filename,
-      monthEnd: dateOnly(exact.month_end),
-      uploadedAt: exact.uploaded_at.toISOString(),
-      status: exact.status,
-    };
+    const usedByPublishedSnapshot =
+      exact.status === "published" || (await publishedSnapshotUsesBatch(prisma, exact.id));
+    if (usedByPublishedSnapshot) {
+      return {
+        originalFilename: fileName,
+        canonicalFilename: exact.canonical_filename,
+        duplicateKind: "exact_file",
+        batchId: Number(exact.id),
+        filename: exact.filename,
+        monthEnd: dateOnly(exact.month_end),
+        uploadedAt: exact.uploaded_at.toISOString(),
+        status: exact.status,
+      };
+    }
   }
 
   const sameName = await prisma.directa_upload_batches.findFirst({
     where: {
       canonical_filename: canonicalFilename,
-      status: "imported",
+      status: { not: "superseded" },
     },
     orderBy: { uploaded_at: "desc" },
     select: {
@@ -237,6 +275,11 @@ export async function checkDirectaCsvDuplicate({
     },
   });
   if (!sameName) return null;
+  const usedByPublishedSnapshot = await publishedSnapshotUsesCsv(prisma, [
+    sameName.canonical_filename,
+    sameName.filename,
+  ]);
+  if (!usedByPublishedSnapshot) return null;
 
   return {
     originalFilename: fileName,

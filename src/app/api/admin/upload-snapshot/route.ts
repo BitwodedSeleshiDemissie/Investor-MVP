@@ -582,6 +582,7 @@ export async function POST(req: NextRequest) {
               })),
               previousSnapshotId,
               canPublish,
+              sourceBatchIds: sourceData.batches.map((batch) => batch.id),
               auditSummaryProvider: auditSummary.provider,
               generatedAt: sourceRecordedAt,
             } as Prisma.InputJsonValue,
@@ -601,7 +602,10 @@ export async function POST(req: NextRequest) {
             metadata: {
               cutoffDate: payload.cutoffDate,
               sourceFiles: newFilenames,
-              storedBatches: sourceData.batches.map((batch) => batch.canonicalFilename),
+              storedBatches: sourceData.batches.map((batch) => ({
+                id: batch.id,
+                canonicalFilename: batch.canonicalFilename,
+              })),
               generatedFrom: "statement_csv_and_directa_pdf_upload",
               brokerageCashSource: payload.overlaySources?.brokerageCashSource,
             } as Prisma.InputJsonValue,
