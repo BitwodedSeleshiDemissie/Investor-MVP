@@ -53,7 +53,11 @@ export default async function AdminCashPage() {
             {cashOutsideDirecta > 0 ? formatEur(cashOutsideDirecta) : "-"}
           </p>
           <p className="text-[11px] text-muted-foreground mt-2">
-            {cashOutsideDirectaSource === "calculated" ? "Calculated residual" : "Source record fallback"}
+            {cashOutsideDirectaSource === "manual"
+              ? "Approved manual value"
+              : cashOutsideDirectaSource === "calculated"
+                ? "Calculated fallback"
+                : "Source record fallback"}
           </p>
         </div>
 
@@ -83,7 +87,7 @@ export default async function AdminCashPage() {
           <h2 className="text-sm font-semibold text-foreground">Cash Outside Brokerage</h2>
         </div>
         <div className="p-5 space-y-3 text-sm text-muted-foreground">
-          <p>Calculated as capital committed minus brokerage account value minus non-listed investments.</p>
+          <p>Approved monthly cash outside brokerage is used when available. The residual formula is only a fallback.</p>
           <div className="rounded-xl border border-border/50 bg-secondary/20 px-4 py-3 font-mono text-xs text-foreground">
             Cash Outside Brokerage = Capital Committed - Listed Securities - Brokerage Account Cash - Non-listed Investments
           </div>

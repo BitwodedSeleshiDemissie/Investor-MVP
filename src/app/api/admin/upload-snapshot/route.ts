@@ -7,7 +7,6 @@ import {
   parsePositionCsvFile,
 } from "@/lib/directa-preprocess";
 import type { DirectaLiquidityPdf } from "@/lib/directa-pdf";
-import { calculateCashOutsideBrokerage } from "@/lib/cash";
 import type { HoldingRow, WorkbookData } from "@/lib/workbook-data";
 import {
   buildDeterministicChecks,
@@ -408,7 +407,9 @@ export async function POST(req: NextRequest) {
   const nonListedValue = formManualItems
     .filter((item) => item.item_type.toLowerCase() !== "cash")
     .reduce((s, item) => s + Number(item.value), 0);
-  let externalCash = 0;
+  const externalCash = formManualItems
+    .filter((item) => item.item_type.toLowerCase() === "cash")
+    .reduce((s, item) => s + Number(item.value), 0);
 
   const [controlRow, fundSettings, profileRows] = await Promise.all([
     prisma.admin_controls.findFirst({
@@ -462,12 +463,6 @@ export async function POST(req: NextRequest) {
   applyPdfListedPositions(workbook, liquidityPdf);
   const brokerageCash = liquidityPdf.liquidity;
   const listedMarketValue = liquidityPdf.listedTotal;
-  externalCash = calculateCashOutsideBrokerage({
-    capitalCommitted,
-    listedValue: listedMarketValue,
-    brokerageCash,
-    nonListedValue,
-  });
   setWorkbookCashMetrics({
     workbook,
     listedValue: listedMarketValue,

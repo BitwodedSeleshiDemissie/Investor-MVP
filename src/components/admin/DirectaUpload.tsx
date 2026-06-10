@@ -259,7 +259,7 @@ export function DirectaUpload() {
           display_name: item.display_name,
           subcategory: item.subcategory,
           value: Number(item.value) || 0,
-        })).filter((item) => item.item_type.toLowerCase() !== "cash")
+        }))
       )
     );
 
@@ -323,6 +323,7 @@ export function DirectaUpload() {
   const otherNonListedItems = nonListedItems.filter(
     (item) => !participationItems.includes(item) && !loanItems.includes(item)
   );
+  const cashItems = manualItems.filter((item) => item.item_type.toLowerCase() === "cash");
 
   function renderManualGroup(title: string, items: ManualItem[]) {
     if (items.length === 0) return null;
@@ -565,17 +566,18 @@ export function DirectaUpload() {
             </p>
           </div>
 
-          {nonListedItems.length > 0 && (
+          {(nonListedItems.length > 0 || cashItems.length > 0) && (
             <>
               {renderManualGroup("Participations", participationItems)}
               {renderManualGroup("Private loan principal", loanItems)}
               {renderManualGroup("Other non-Directa values", otherNonListedItems)}
+              {renderManualGroup("Cash outside brokerage", cashItems)}
             </>
           )}
 
           <div className="px-4 py-3 border-t border-border/30 bg-secondary/10">
             <p className="text-[11px] text-muted-foreground">
-              Cash outside brokerage is calculated automatically from capital committed, brokerage account value, and non-listed investments.
+              Cash outside brokerage is pre-filled from the last approved value. Confirm or edit before processing.
             </p>
           </div>
         </div>

@@ -183,7 +183,7 @@ describe("getFixedPortfolioValues — reads admin-entered values", () => {
     mockPrismaClient.admin_controls.findFirst.mockReset().mockResolvedValue(null);
   });
 
-  it("calculates cash outside brokerage from capital, brokerage value, and non-listed values", async () => {
+  it("uses approved cash outside brokerage before falling back to residual calculation", async () => {
     // Promise.all fires three $queryRaw calls concurrently; resolve each in order.
     mockPrismaClient.$queryRaw
       .mockResolvedValueOnce([                                      // latest per key
@@ -202,8 +202,8 @@ describe("getFixedPortfolioValues — reads admin-entered values", () => {
 
     expect(result.privateParticipations).toBe(400_000);
     expect(result.privateLoanPrincipal).toBe(150_000);
-    expect(result.cashOutsideDirecta).toBe(100_000);
-    expect(result.cashOutsideDirectaSource).toBe("calculated");
+    expect(result.cashOutsideDirecta).toBe(75_000);
+    expect(result.cashOutsideDirectaSource).toBe("manual");
     expect(result.statementCash).toBe(250_000);
   });
 
@@ -514,6 +514,61 @@ describe("source record — live dashboard overlay after publish", () => {
     expect(result.investorPerformance.find((row) => row.name === "Bob")?.currentValueEur).toBe(600_000);
   });
 
+  it("uses live approved cash when a Directa source record omitted cash manual items", async () => {
+    const source = makeSourceRecordPayload({
+      composition: { listed: 2_200_000, nonListed: 500_000, cash: 250_000, total: 2_950_000 },
+      directaCash: 250_000,
+      kpis: {
+        ...makeSourceRecordPayload().kpis,
+        totalPortfolioValue: 2_950_000,
+        capitalCommitted: 1_500_000,
+      },
+      overlaySources: {
+        capitalCommitted: 1_500_000,
+        nonListedValue: 500_000,
+        externalCash: 0,
+        overlayItemCount: 2,
+        investorProfileCount: 2,
+        manualItems: [
+          { item_key: "PRIVATE_PARTICIPATIONS", item_type: "Non-Listed", value: 300_000 },
+          { item_key: "PRIVATE_LOAN_PRINCIPAL", item_type: "Non-Listed", value: 200_000 },
+        ],
+      },
+    });
+    mockPrismaClient.$queryRaw
+      .mockResolvedValueOnce([{ as_of_date: "2025-12-31", payload: source }])
+      .mockResolvedValueOnce([
+        { item_key: "PRIVATE_PARTICIPATIONS", display_name: "Private Participations", item_type: "Non-Listed", value: "300000" },
+        { item_key: "PRIVATE_LOAN_PRINCIPAL", display_name: "Private Loan Principal", item_type: "Non-Listed", value: "200000" },
+        { item_key: "CASH_OUTSIDE_DIRECTA", display_name: "Cash Outside Brokerage", item_type: "Cash", value: "50000" },
+      ]);
+    mockPrismaClient.investor_profiles.findMany.mockResolvedValueOnce([
+      {
+        name: "Alice",
+        investor_type: "Individual",
+        capital_eur: 1_000_000,
+        units: 500,
+        subscription_date: new Date("2024-01-01"),
+        nav_unit_at_sub: 2_000,
+      },
+      {
+        name: "Bob",
+        investor_type: "Individual",
+        capital_eur: 500_000,
+        units: 250,
+        subscription_date: new Date("2025-01-01"),
+        nav_unit_at_sub: 2_000,
+      },
+    ]);
+
+    const result = await getPortfolioSnapshot("Alice");
+
+    expect(result.composition.cash).toBe(300_000);
+    expect(result.kpis.totalPortfolioValue).toBe(2_000_000);
+    expect(result.kpis.capitalCommitted).toBe(1_000_000);
+    expect(result.kpis.pctSinceEntry).toBe(1);
+  });
+
   it("non-listed value is the source-record 500k even if admin_manual_values would have 0", async () => {
     // Simulate: admin deleted the entry after publish — no rows would come back
     // from admin_manual_values. source record must still show 500k.
@@ -567,6 +622,14 @@ describe("manual-defaults API — pre-fills upload UI with latest admin values",
         latest_value: "150000",
         latest_date: "2025-12-31",
       },
+      {
+        item_key: "CASH_OUTSIDE_DIRECTA",
+        display_name: "Cash Outside Brokerage",
+        item_type: "Cash",
+        subcategory: "Cash Outside Brokerage",
+        latest_value: "75000",
+        latest_date: "2025-12-31",
+      },
     ]);
 
     const response = await manualDefaultsGet();
@@ -575,7 +638,7 @@ describe("manual-defaults API — pre-fills upload UI with latest admin values",
     };
 
     expect(response.status).toBe(200);
-    expect(body.items).toHaveLength(2);
+    expect(body.items).toHaveLength(3);
 
     const part = body.items.find((i) => i.item_key === "PRIVATE_PARTICIPATIONS")!;
     expect(part.latest_value).toBe("400000");
@@ -584,7 +647,9 @@ describe("manual-defaults API — pre-fills upload UI with latest admin values",
     const loan = body.items.find((i) => i.item_key === "PRIVATE_LOAN_PRINCIPAL")!;
     expect(loan.latest_value).toBe("150000");
 
-    expect(body.items.find((i) => i.item_type === "Cash")).toBeUndefined();
+    const cash = body.items.find((i) => i.item_key === "CASH_OUTSIDE_DIRECTA")!;
+    expect(cash.latest_value).toBe("75000");
+    expect(cash.item_type).toBe("Cash");
   });
 
   it("returns null latest_value when admin has not entered any values yet", async () => {

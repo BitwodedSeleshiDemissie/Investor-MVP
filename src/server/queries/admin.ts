@@ -206,7 +206,7 @@ export type FixedPortfolioValues = {
   privateParticipations: number;
   privateLoanPrincipal: number;
   cashOutsideDirecta: number;
-  cashOutsideDirectaSource: "calculated" | "source_record" | "none";
+  cashOutsideDirectaSource: "manual" | "calculated" | "source_record" | "none";
   statementCash: number;
   history: Array<{
     asOfDate: string;
@@ -333,7 +333,13 @@ export async function getFixedPortfolioValues(): Promise<FixedPortfolioValues> {
     if (itemType) return itemType !== "cash";
     return row.item_key !== "CASH_OUTSIDE_DIRECTA" && !row.item_key.includes("CASH");
   });
+  const manualCashRows = latestRows.filter((row) => {
+    const itemType = (row.item_type ?? "").toLowerCase();
+    if (itemType) return itemType === "cash";
+    return row.item_key === "CASH_OUTSIDE_DIRECTA" || row.item_key.includes("CASH");
+  });
   const manualNonListedValue = manualNonListedRows.reduce((sum, row) => sum + Number(row.value), 0);
+  const manualCashOutside = manualCashRows.reduce((sum, row) => sum + Number(row.value), 0);
   const snap = parseSnapshotPayload(snapRows[0]?.payload);
   const statementCash = Number(snapRows[0]?.direct_cash ?? 0);
   const snapshotNonListed = Number(snap?.composition?.nonListed ?? 0);
@@ -350,10 +356,16 @@ export async function getFixedPortfolioValues(): Promise<FixedPortfolioValues> {
     nonListedValue: effectiveNonListed,
   });
   const sourceRecordCashOutside = getSourceRecordCashOutsideBrokerage(snapRows[0]?.payload);
-  const cashOutsideDirecta = capitalCommitted > 0 ? calculatedCashOutside : sourceRecordCashOutside;
-  const cashOutsideDirectaSource = capitalCommitted > 0
-    ? "calculated"
-    : sourceRecordCashOutside > 0 ? "source_record" : "none";
+  const cashOutsideDirecta = manualCashRows.length > 0
+    ? manualCashOutside
+    : sourceRecordCashOutside > 0
+      ? sourceRecordCashOutside
+      : calculatedCashOutside;
+  const cashOutsideDirectaSource = manualCashRows.length > 0
+    ? "manual"
+    : sourceRecordCashOutside > 0
+      ? "source_record"
+      : calculatedCashOutside > 0 ? "calculated" : "none";
 
   const rowsByDate = new Map<string, typeof historyRows>();
   for (const r of historyRows) {

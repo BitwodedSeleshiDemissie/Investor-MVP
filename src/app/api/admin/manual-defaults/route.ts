@@ -50,7 +50,6 @@ export async function GET() {
       LIMIT 1
     ) mv ON TRUE
     WHERE d.active = TRUE
-      AND LOWER(d.item_type) <> 'cash'
       AND NOT (
         d.item_key = 'PRIVATE_PARTICIPATIONS'
         AND (SELECT yes FROM has_detailed_participations)

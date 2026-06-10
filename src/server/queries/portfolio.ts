@@ -263,10 +263,8 @@ function sourceRecordOwnsInvestorValuation(
   if (!profilesMatch) return false;
 
   const sourceItems = (snapshot.overlaySources?.manualItems ?? [])
-    .filter((item) => item.item_type.toLowerCase() !== "cash")
     .map((item) => [item.item_key, Number(item.value)] as const);
   const liveItems = manualRows
-    .filter((item) => item.item_type.toLowerCase() !== "cash")
     .map((item) => [item.item_key, Number(item.value)] as const);
   if (sourceItems.length === 0 || liveItems.length === 0) return true;
   if (sourceItems.length !== liveItems.length) return false;
@@ -370,6 +368,7 @@ async function overlayAdminValues(snapshot: PortfolioSnapshot): Promise<Portfoli
       : control ? Number(control.capital_committed) : result.kpis.capitalCommitted;
 
   const nonListedRows = manualRows.filter((row) => row.item_type.toLowerCase() !== "cash");
+  const cashRows = manualRows.filter((row) => row.item_type.toLowerCase() === "cash");
   const nonListed = nonListedRows.length > 0
     ? nonListedRows.reduce((sum, row) => sum + Number(row.value), 0)
     : result.composition.nonListed;
@@ -377,16 +376,19 @@ async function overlayAdminValues(snapshot: PortfolioSnapshot): Promise<Portfoli
   const sourceRecordCashOutsideBrokerage = Number(
     result.overlaySources?.externalCash ?? Math.max(0, Number(result.composition?.cash ?? 0) - statementCash)
   );
+  const manualCashOutsideBrokerage = cashRows.reduce((sum, row) => sum + Number(row.value), 0);
   const cashOutsideBrokerage = keepSourceInvestorValuation
-    ? sourceRecordCashOutsideBrokerage + postCutoffCapital
-    : hasLiveCapital
-    ? calculateCashOutsideBrokerage({
-        capitalCommitted: result.kpis.capitalCommitted,
-        listedValue: result.composition.listed,
-        brokerageCash: statementCash,
-        nonListedValue: nonListed,
-      })
-    : sourceRecordCashOutsideBrokerage;
+    ? (cashRows.length > 0 ? manualCashOutsideBrokerage : sourceRecordCashOutsideBrokerage) + postCutoffCapital
+    : cashRows.length > 0
+      ? manualCashOutsideBrokerage
+      : hasLiveCapital
+        ? calculateCashOutsideBrokerage({
+            capitalCommitted: result.kpis.capitalCommitted,
+            listedValue: result.composition.listed,
+            brokerageCash: statementCash,
+            nonListedValue: nonListed,
+          })
+        : sourceRecordCashOutsideBrokerage;
   const cash = statementCash + cashOutsideBrokerage;
 
   const composition: PortfolioComposition = {
