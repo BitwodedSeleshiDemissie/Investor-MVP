@@ -1,6 +1,8 @@
 import { Building2, HandCoins } from "lucide-react";
+import { redirect } from "next/navigation";
 import { getPortfolioSnapshot } from "@/server/queries/portfolio";
 import { getLatestManualRows } from "@/server/queries/admin";
+import { cleanDisplayName, getSession } from "@/lib/auth";
 import { formatEur, formatDate } from "@/lib/utils";
 
 type NonListedRow = {
@@ -124,7 +126,12 @@ function BucketSection({ title, rows, total }: { title: string; rows: NonListedR
 }
 
 export default async function NonListedPage() {
-  const snap = await getPortfolioSnapshot();
+  const session = await getSession();
+  if (!session) redirect("/login");
+  const investorName = cleanDisplayName(session.investorName);
+  if (session.role === "investor" && !investorName) redirect("/login");
+
+  const snap = await getPortfolioSnapshot(session.role === "admin" ? undefined : investorName);
   const { composition, cutoffDate } = snap;
 
   const approvedRows = rowsFromApprovedSnapshot(snap);

@@ -505,6 +505,28 @@ function applyInvestorPersonalization(snapshot: PortfolioSnapshot, investorName:
     const result = cloneSnapshot(snapshot);
     result.investorName = requestedName;
     result.investorPerformance = [];
+    result.kpis = {
+      ...result.kpis,
+      totalPortfolioValue: 0,
+      capitalCommitted: 0,
+      pctSinceEntry: 0,
+      moic: 0,
+      currentYield: 0,
+      distributionsTotal: 0,
+      distributionsCount: 0,
+      distributionsLastDate: null,
+      totalIncome: 0,
+    };
+    result.allocation = [];
+    result.holdings = [];
+    result.composition = { listed: 0, nonListed: 0, cash: 0, total: 0 };
+    result.pnl = { unrealized: 0, realized: 0, netTotal: 0 };
+    result.directaCash = 0;
+    result.distributions = [];
+    result.overlaySources = result.overlaySources
+      ? { ...result.overlaySources, capitalCommitted: 0, nonListedValue: 0, externalCash: 0, manualItems: [] }
+      : undefined;
+    result.warnings = ["No active investor profile is linked to this login."];
     return result;
   }
 
@@ -520,6 +542,40 @@ function applyInvestorPersonalization(snapshot: PortfolioSnapshot, investorName:
     realized:   result.pnl.realized   * fractionOfFund,
     netTotal:   result.pnl.netTotal   * fractionOfFund,
   };
+  result.composition = {
+    listed: result.composition.listed * fractionOfFund,
+    nonListed: result.composition.nonListed * fractionOfFund,
+    cash: result.composition.cash * fractionOfFund,
+    total: currentValue,
+  };
+  result.directaCash = result.directaCash * fractionOfFund;
+  result.allocation = result.allocation.map((slice) => ({
+    ...slice,
+    marketValue: slice.marketValue * fractionOfFund,
+  }));
+  result.holdings = result.holdings.map((holding) => ({
+    ...holding,
+    shares: holding.shares * fractionOfFund,
+    costBasis: holding.costBasis * fractionOfFund,
+    marketValue: holding.marketValue * fractionOfFund,
+    unrealizedPnl: holding.unrealizedPnl * fractionOfFund,
+  }));
+  result.distributions = result.distributions.map((distribution) => ({
+    ...distribution,
+    amount: distribution.amount * fractionOfFund,
+  }));
+  if (result.overlaySources) {
+    result.overlaySources = {
+      ...result.overlaySources,
+      capitalCommitted: committed,
+      nonListedValue: result.overlaySources.nonListedValue * fractionOfFund,
+      externalCash: result.overlaySources.externalCash * fractionOfFund,
+      manualItems: result.overlaySources.manualItems?.map((item) => ({
+        ...item,
+        value: Number(item.value) * fractionOfFund,
+      })),
+    };
+  }
 
   result.investorName               = investor.name;
   result.investorPerformance        = [investor];
@@ -527,14 +583,20 @@ function applyInvestorPersonalization(snapshot: PortfolioSnapshot, investorName:
   result.kpis.capitalCommitted      = committed;
   result.kpis.pctSinceEntry         = committed > 0 ? (currentValue - committed) / committed : 0;
   result.kpis.moic                  = investor.moic;
+  result.kpis.totalIncome           = result.kpis.totalIncome * fractionOfFund;
+  result.kpis.distributionsTotal    = result.kpis.distributionsTotal * fractionOfFund;
+  result.kpis.currentYield          = currentValue > 0 ? result.kpis.totalIncome / currentValue : 0;
   result.irr.investorIrr            = investor.irrAnnualized;
   result.warnings = [];
 
   const slicedTs = sliceTimeseriesFromDate(result.timeseries, investor.subscriptionDate);
-  result.timeseries = slicedTs;
+  result.timeseries = slicedTs.map((point) => ({
+    ...point,
+    nav: point.nav * fractionOfFund,
+  }));
 
   result.risk = recomputeRiskFromTimeseries(
-    slicedTs,
+    result.timeseries,
     result.risk.riskFreeRate,
     investor.irrAnnualized
   );

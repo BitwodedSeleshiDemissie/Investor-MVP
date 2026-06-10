@@ -14,16 +14,21 @@ const loginSchema = z.object({
 
 async function getClientIp(): Promise<string> {
   const hdrs = await headers();
-  return hdrs.get("x-forwarded-for")?.split(",")[0].trim() ?? "unknown";
+  return (
+    hdrs.get("x-vercel-forwarded-for")?.split(",")[0].trim() ||
+    hdrs.get("x-real-ip")?.trim() ||
+    hdrs.get("x-forwarded-for")?.split(",")[0].trim() ||
+    "unknown"
+  );
 }
 
 export const loginAction = actionClient.schema(loginSchema).action(async ({ parsedInput }) => {
   const ip = await getClientIp();
-  if (!checkRateLimit(`login:${ip}`)) {
+  const email = parsedInput.email.trim().toLowerCase();
+
+  if (!checkRateLimit(`login:${ip}:${email}`) || !checkRateLimit(`login-ip:${ip}`)) {
     return { error: "Troppi tentativi. Riprova tra un minuto." };
   }
-
-  const email = parsedInput.email.trim().toLowerCase();
 
   try {
     await signIn("credentials", {

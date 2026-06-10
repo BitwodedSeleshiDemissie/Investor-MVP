@@ -1,6 +1,8 @@
 import { List } from "lucide-react";
+import { redirect } from "next/navigation";
 import { getPortfolioSnapshot } from "@/server/queries/portfolio";
 import { HoldingsTable } from "@/components/dashboard/HoldingsTable";
+import { cleanDisplayName, getSession } from "@/lib/auth";
 import { formatDate } from "@/lib/utils";
 import type { LucideIcon } from "lucide-react";
 
@@ -25,7 +27,12 @@ function Section({ title, icon: Icon, children }: { title: string; icon: LucideI
 }
 
 export default async function ListedPage() {
-  const snap = await getPortfolioSnapshot();
+  const session = await getSession();
+  if (!session) redirect("/login");
+  const investorName = cleanDisplayName(session.investorName);
+  if (session.role === "investor" && !investorName) redirect("/login");
+
+  const snap = await getPortfolioSnapshot(session.role === "admin" ? undefined : investorName);
   const { holdings, cutoffDate } = snap;
   const positionsAsOf = snap.dataFreshness?.positionsAsOf ?? cutoffDate;
 

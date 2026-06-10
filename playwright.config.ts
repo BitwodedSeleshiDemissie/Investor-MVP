@@ -27,5 +27,9 @@ export default defineConfig({
         url: `http://127.0.0.1:${port}/login`,
         reuseExistingServer: !process.env.CI,
         timeout: 300_000,
+        env: {
+          ...process.env,
+          ALLOW_PLAINTEXT_AUTH_USERS: process.env.ALLOW_PLAINTEXT_AUTH_USERS ?? "true",
+        },
       },
 });

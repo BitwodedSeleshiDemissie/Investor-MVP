@@ -376,16 +376,15 @@ describe("getPortfolioSnapshot — per-investor slice from source record payload
     expect(result.investorPerformance).toHaveLength(2);
   });
 
-  it("composition values are shared by all investors (non-listed and cash unchanged per-investor)", async () => {
+  it("scales composition values to the investor slice", async () => {
     mockPrismaClient.$queryRaw.mockResolvedValueOnce([{ as_of_date: "2025-12-31", payload: makeSourceRecordPayload() }]);
 
     const result = await getPortfolioSnapshot("Alice");
 
-    // Composition fields are fund-level and not scaled to the investor slice.
-    // The investor sees the overall fund breakdown, not a scaled sub-portfolio.
-    expect(result.composition.nonListed).toBe(500_000);
-    expect(result.composition.cash).toBe(300_000);
-    expect(result.composition.listed).toBe(2_200_000);
+    expect(result.composition.nonListed).toBeCloseTo(333_333.333333);
+    expect(result.composition.cash).toBeCloseTo(200_000);
+    expect(result.composition.listed).toBeCloseTo(1_466_666.666667);
+    expect(result.composition.total).toBeCloseTo(2_000_000);
   });
 });
 
@@ -563,7 +562,7 @@ describe("source record — live dashboard overlay after publish", () => {
 
     const result = await getPortfolioSnapshot("Alice");
 
-    expect(result.composition.cash).toBe(300_000);
+    expect(result.composition.cash).toBe(200_000);
     expect(result.kpis.totalPortfolioValue).toBe(2_000_000);
     expect(result.kpis.capitalCommitted).toBe(1_000_000);
     expect(result.kpis.pctSinceEntry).toBe(1);

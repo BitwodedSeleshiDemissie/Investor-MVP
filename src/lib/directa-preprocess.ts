@@ -124,7 +124,7 @@ function classifyByRules(name: string): Tipo | null {
 }
 
 async function classifyWithClaude(unknowns: string[]): Promise<Record<string, Tipo>> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.ENABLE_EXTERNAL_AI_CLASSIFIER === "true" ? process.env.ANTHROPIC_API_KEY : undefined;
   if (!apiKey || unknowns.length === 0) {
     return Object.fromEntries(unknowns.map((s) => [s, "Stock" as Tipo]));
   }

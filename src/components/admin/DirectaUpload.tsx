@@ -643,7 +643,9 @@ export function DirectaUpload() {
         const isReady = result.canPublish && blockers.length === 0;
         const statusText = blockers.length > 0
           ? `Blocked: ${blockers[0].title}`
-          : verdict || (result.canPublish ? "Ready to publish." : "Needs manual attention.");
+          : isReady
+            ? verdict || "Ready to publish."
+            : "Needs manual attention.";
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 px-4 backdrop-blur-sm">
             <div className="w-full max-w-md rounded-2xl border border-border/70 overflow-hidden" style={{ background: "hsl(var(--card))", boxShadow: "var(--shadow-card)" }}>

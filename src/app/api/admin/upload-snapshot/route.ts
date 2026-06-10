@@ -182,7 +182,7 @@ async function buildAiReviewSummary(args: {
   checks: ReviewCheck[];
 }): Promise<{ summary: string; provider: "openai" | "rules" }> {
   const fallback = buildReviewSummary(args);
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = process.env.ENABLE_EXTERNAL_AI_REVIEW === "true" ? process.env.OPENAI_API_KEY : undefined;
   if (!apiKey) return { summary: fallback, provider: "rules" };
 
   const model = process.env.OPENAI_AUDIT_MODEL || "gpt-4o-mini";
@@ -194,7 +194,10 @@ async function buildAiReviewSummary(args: {
   try {
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${apiKey}`,
+      },
       body: JSON.stringify({
         model,
         temperature: 0.1,
@@ -340,9 +343,9 @@ export async function POST(req: NextRequest) {
       });
       liquidityPdfs.push(parsed);
       pdfFilenames.push(file.name);
-    } catch (err) {
+    } catch {
       return NextResponse.json(
-        { error: err instanceof Error ? err.message : `Could not parse Directa PDF "${file.name}"` },
+        { error: "Could not parse one of the uploaded Directa PDF files. Verify the file is a valid Situazione Patrimoniale PDF and try again." },
         { status: 422 }
       );
     }

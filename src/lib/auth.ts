@@ -1,6 +1,6 @@
 // Thin compatibility layer — all existing callers (API routes, server components,
 // safe-action, tests) continue to import from here unchanged.
-import { auth } from "@/auth";
+import { auth, findUser } from "@/auth";
 export type { Role } from "@/auth";
 
 export interface Session {
@@ -18,9 +18,11 @@ export function cleanDisplayName(value: string | undefined | null): string | und
 export async function getSession(): Promise<Session | null> {
   const s = await auth();
   if (!s?.user?.email) return null;
+  const currentUser = findUser(s.user.email);
+  if (!currentUser) return null;
   return {
-    role: s.user.role,
-    email: s.user.email,
-    investorName: cleanDisplayName(s.user.investorName),
+    role: currentUser.role,
+    email: currentUser.email,
+    investorName: cleanDisplayName(currentUser.investorName),
   };
 }
