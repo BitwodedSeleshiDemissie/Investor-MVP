@@ -240,6 +240,26 @@ describe("getFixedPortfolioValues — reads admin-entered values", () => {
     expect(result.history).toHaveLength(0);
   });
 
+  it("uses participation and loan registers when manual balance rows are missing", async () => {
+    mockPrismaClient.$queryRaw
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{
+        direct_cash: "0",
+        payload: makeSourceRecordPayload({
+          composition: { listed: 1_000_000, nonListed: 290_000, cash: 0, total: 1_290_000 },
+        }),
+      }])
+      .mockResolvedValueOnce([{ capital_committed: "0" }])
+      .mockResolvedValueOnce([{ value: "155000", row_count: 3 }])
+      .mockResolvedValueOnce([{ value: "135000", row_count: 1 }]);
+
+    const result = await getFixedPortfolioValues();
+
+    expect(result.privateParticipations).toBe(155_000);
+    expect(result.privateLoanPrincipal).toBe(135_000);
+  });
+
   it("builds approved balance history by carrying prior balances forward", async () => {
     mockPrismaClient.$queryRaw
       .mockResolvedValueOnce([])
@@ -667,6 +687,33 @@ describe("manual-defaults API — pre-fills upload UI with latest admin values",
     const body = (await response.json()) as { items: Array<{ item_key: string; latest_value: string | null }> };
 
     expect(body.items[0].latest_value).toBeNull();
+  });
+
+  it("returns register-backed defaults when detailed manual values are missing", async () => {
+    mockPrismaClient.$queryRaw
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        { name: "Ariete Tech Solutions", latest_value: "100000", latest_date: "2026-05-16" },
+        { name: "BS2 Srl", latest_value: "25000", latest_date: "2026-05-16" },
+        { name: "Bollette Republic", latest_value: "30000", latest_date: "2026-05-16" },
+      ])
+      .mockResolvedValueOnce([
+        { name: "ATS", latest_value: "135000", latest_date: "2026-05-16" },
+      ]);
+
+    const response = await manualDefaultsGet();
+    const body = (await response.json()) as {
+      items: Array<{ item_key: string; item_type: string; subcategory: string; latest_value: string | null }>;
+    };
+
+    expect(body.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ item_key: "PRIVATE_PARTICIPATION_ARIETE_TECH_SOLUTIONS", latest_value: "100000" }),
+        expect.objectContaining({ item_key: "PRIVATE_PARTICIPATION_BS2_SRL", latest_value: "25000" }),
+        expect.objectContaining({ item_key: "PRIVATE_PARTICIPATION_BOLLETTE_REPUBLIC", latest_value: "30000" }),
+        expect.objectContaining({ item_key: "PRIVATE_LOAN_ATS", latest_value: "135000" }),
+      ])
+    );
   });
 
   it("returns 403 for non-admin sessions", async () => {

@@ -8,6 +8,7 @@ import {
   saveFundSettings as persistFundSettings,
   type FundSettings,
 } from "@/server/fund-settings";
+import { AGGREGATE_PRIVATE_LOAN_KEY, participationItemKey, privateLoanItemKey } from "@/lib/manual-entry-keys";
 
 const dictionarySchema = z.object({
   itemKey: z.string().min(1).max(100),
@@ -240,7 +241,7 @@ export const saveNonListedValues = adminAction
     if (!dbEnabled()) return { error: "Database not configured" };
     const prisma = getPrisma();
     const investee = parsedInput.investee.trim();
-    const itemKey = `PRIVATE_PARTICIPATION_${slugKey(investee)}`;
+    const itemKey = participationItemKey(investee);
 
     const latest = await prisma.admin_manual_values.findFirst({
       where: { item_key: itemKey },
@@ -299,10 +300,13 @@ export const savePrivateLoanPrincipal = adminAction
     if (!dbEnabled()) return { error: "Database not configured" };
     const prisma = getPrisma();
     const counterparty = parsedInput.counterparty.trim();
-    const itemKey = `PRIVATE_LOAN_${slugKey(counterparty)}`;
+    const itemKey = privateLoanItemKey(counterparty);
 
     const hasDetailedLoans = await prisma.admin_manual_values.findFirst({
-      where: { item_key: { startsWith: "PRIVATE_LOAN_" } },
+      where: {
+        item_key: { startsWith: "PRIVATE_LOAN_" },
+        NOT: { item_key: AGGREGATE_PRIVATE_LOAN_KEY },
+      },
       select: { value: true },
     });
     const latest = await prisma.admin_manual_values.findFirst({

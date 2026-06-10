@@ -1,5 +1,11 @@
 import { dbEnabled, getPrisma } from "@/db/prisma";
 import { calculateCashOutsideBrokerage } from "@/lib/cash";
+import {
+  AGGREGATE_PRIVATE_LOAN_KEY,
+  AGGREGATE_PRIVATE_PARTICIPATIONS_KEY,
+  isDetailedParticipationKey,
+  isDetailedPrivateLoanKey,
+} from "@/lib/manual-entry-keys";
 import type {
   AdminDictionaryItem,
   ManualValueRow,
@@ -271,9 +277,9 @@ export async function getFixedPortfolioValues(): Promise<FixedPortfolioValues> {
   if (!dbEnabled()) return empty;
   const prisma = getPrisma();
 
-  const KEYS = ["PRIVATE_PARTICIPATIONS", "PRIVATE_LOAN_PRINCIPAL", "CASH_OUTSIDE_DIRECTA"];
+  const KEYS = [AGGREGATE_PRIVATE_PARTICIPATIONS_KEY, AGGREGATE_PRIVATE_LOAN_KEY, "CASH_OUTSIDE_DIRECTA"];
 
-  const [latestRows, historyRows, snapRows, profileCapitalRows, controlRow] = await Promise.all([
+  const [latestRows, historyRows, snapRows, profileCapitalRows, participationLedgerRows, loanLedgerRows, controlRow] = await Promise.all([
     prisma.$queryRaw<Array<{ item_key: string; item_type: string | null; value: string }>>`
       WITH picked AS (
         SELECT DISTINCT ON (mv.item_key)
@@ -317,6 +323,18 @@ export async function getFixedPortfolioValues(): Promise<FixedPortfolioValues> {
       FROM investor_profiles
       WHERE active = TRUE
     `,
+    prisma.$queryRaw<Array<{ value: string | null; row_count: number }>>`
+      SELECT
+        COALESCE(SUM(CASE WHEN tipo = 'SELL' THEN -amount ELSE amount END), 0)::numeric::text AS value,
+        COUNT(*)::int AS row_count
+      FROM non_listed_transactions
+    `,
+    prisma.$queryRaw<Array<{ value: string | null; row_count: number }>>`
+      SELECT
+        COALESCE(SUM(CASE WHEN tipo = 'REPAYMENT' THEN -amount ELSE amount END), 0)::numeric::text AS value,
+        COUNT(*)::int AS row_count
+      FROM private_loan_transactions
+    `,
     prisma.admin_controls.findFirst({
       orderBy: [{ as_of_date: "desc" }, { created_at: "desc" }],
       select: { capital_committed: true },
@@ -324,10 +342,17 @@ export async function getFixedPortfolioValues(): Promise<FixedPortfolioValues> {
   ]);
 
   const byKey = new Map(latestRows.map((r) => [r.item_key, Number(r.value)]));
-  const detailedParticipationRows = latestRows.filter((r) => r.item_key.startsWith("PRIVATE_PARTICIPATION_"));
-  const detailedLoanRows = latestRows.filter((r) => r.item_key.startsWith("PRIVATE_LOAN_"));
+  const detailedParticipationRows = latestRows.filter((r) => isDetailedParticipationKey(r.item_key));
+  const detailedLoanRows = latestRows.filter((r) => isDetailedPrivateLoanKey(r.item_key));
   const detailedParticipations = detailedParticipationRows.reduce((s, r) => s + Number(r.value), 0);
   const detailedLoans = detailedLoanRows.reduce((s, r) => s + Number(r.value), 0);
+  const participationLedgerCount = Number(participationLedgerRows[0]?.row_count ?? 0);
+  const loanLedgerCount = Number(loanLedgerRows[0]?.row_count ?? 0);
+  const participationLedgerValue = Math.max(0, Number(participationLedgerRows[0]?.value ?? 0));
+  const loanLedgerValue = Math.max(0, Number(loanLedgerRows[0]?.value ?? 0));
+  const ledgerNonListedValue =
+    (participationLedgerCount > 0 ? participationLedgerValue : 0) +
+    (loanLedgerCount > 0 ? loanLedgerValue : 0);
   const manualNonListedRows = latestRows.filter((row) => {
     const itemType = (row.item_type ?? "").toLowerCase();
     if (itemType) return itemType !== "cash";
@@ -344,7 +369,9 @@ export async function getFixedPortfolioValues(): Promise<FixedPortfolioValues> {
   const statementCash = Number(snapRows[0]?.direct_cash ?? 0);
   const snapshotNonListed = Number(snap?.composition?.nonListed ?? 0);
   const snapshotListed = Number(snap?.composition?.listed ?? 0);
-  const effectiveNonListed = manualNonListedRows.length > 0 ? manualNonListedValue : snapshotNonListed;
+  const effectiveNonListed = participationLedgerCount > 0 || loanLedgerCount > 0
+    ? ledgerNonListedValue
+    : manualNonListedRows.length > 0 ? manualNonListedValue : snapshotNonListed;
   const profileCapitalCommitted = Number(profileCapitalRows[0]?.capital_committed ?? 0);
   const capitalCommitted = profileCapitalCommitted > 0
     ? profileCapitalCommitted
@@ -383,27 +410,36 @@ export async function getFixedPortfolioValues(): Promise<FixedPortfolioValues> {
         itemKeys.add(row.item_key);
       }
       const dParticipations = [...balancesByKey.entries()]
-        .filter(([key]) => key.startsWith("PRIVATE_PARTICIPATION_"))
+        .filter(([key]) => isDetailedParticipationKey(key))
         .reduce((sum, [, v]) => sum + v, 0);
       const dLoans = [...balancesByKey.entries()]
-        .filter(([key]) => key.startsWith("PRIVATE_LOAN_"))
+        .filter(([key]) => isDetailedPrivateLoanKey(key))
         .reduce((sum, [, v]) => sum + v, 0);
       return {
         asOfDate,
-        privateParticipations: dParticipations > 0 ? dParticipations : balancesByKey.get("PRIVATE_PARTICIPATIONS") ?? 0,
-        privateLoanPrincipal: dLoans > 0 ? dLoans : balancesByKey.get("PRIVATE_LOAN_PRINCIPAL") ?? 0,
+        privateParticipations: dParticipations > 0 ? dParticipations : balancesByKey.get(AGGREGATE_PRIVATE_PARTICIPATIONS_KEY) ?? 0,
+        privateLoanPrincipal: dLoans > 0 ? dLoans : balancesByKey.get(AGGREGATE_PRIVATE_LOAN_KEY) ?? 0,
         cashOutsideDirecta: balancesByKey.get("CASH_OUTSIDE_DIRECTA") ?? 0,
         itemKeys: [...itemKeys],
       };
     });
 
-  return {
-    privateParticipations: detailedParticipationRows.length > 0
+  const privateParticipations = participationLedgerCount > 0
+    ? participationLedgerValue
+    : detailedParticipationRows.length > 0
       ? detailedParticipations
-      : byKey.has("PRIVATE_PARTICIPATIONS")
-        ? byKey.get("PRIVATE_PARTICIPATIONS") ?? 0
-        : manualNonListedRows.length > 0 ? Math.max(0, manualNonListedValue - (byKey.get("PRIVATE_LOAN_PRINCIPAL") ?? detailedLoans)) : snapshotNonListed,
-    privateLoanPrincipal: detailedLoanRows.length > 0 ? detailedLoans : byKey.get("PRIVATE_LOAN_PRINCIPAL") ?? 0,
+      : byKey.has(AGGREGATE_PRIVATE_PARTICIPATIONS_KEY)
+        ? byKey.get(AGGREGATE_PRIVATE_PARTICIPATIONS_KEY) ?? 0
+        : manualNonListedRows.length > 0 ? Math.max(0, manualNonListedValue - (byKey.get(AGGREGATE_PRIVATE_LOAN_KEY) ?? detailedLoans)) : snapshotNonListed;
+  const privateLoanPrincipal = loanLedgerCount > 0
+    ? loanLedgerValue
+    : detailedLoanRows.length > 0
+      ? detailedLoans
+      : byKey.get(AGGREGATE_PRIVATE_LOAN_KEY) ?? 0;
+
+  return {
+    privateParticipations,
+    privateLoanPrincipal,
     cashOutsideDirecta,
     cashOutsideDirectaSource,
     statementCash: Number(snapRows[0]?.direct_cash ?? 0),
