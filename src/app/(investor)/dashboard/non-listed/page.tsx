@@ -10,6 +10,7 @@ type NonListedRow = {
   label: string;
   bucket: "participation" | "loan" | "other";
   value: number;
+  fundValue?: number;
   date: string;
 };
 
@@ -62,9 +63,20 @@ function sum(rows: NonListedRow[]) {
   return rows.reduce((total, row) => total + row.value, 0);
 }
 
+function sumFund(rows: NonListedRow[]) {
+  return rows.reduce((total, row) => total + Number(row.fundValue ?? 0), 0);
+}
+
+function withFundValues(rows: NonListedRow[], fundRows: NonListedRow[] | null): NonListedRow[] {
+  if (!fundRows) return rows;
+  const fundByKey = new Map(fundRows.map((row) => [row.key, row.value]));
+  return rows.map((row) => ({ ...row, fundValue: fundByKey.get(row.key) }));
+}
+
 function BucketSection({ title, rows, total }: { title: string; rows: NonListedRow[]; total: number }) {
   if (rows.length === 0) return null;
   const bucketTotal = sum(rows);
+  const showFundValues = rows.some((row) => typeof row.fundValue === "number");
 
   return (
     <div
@@ -79,15 +91,23 @@ function BucketSection({ title, rows, total }: { title: string; rows: NonListedR
           <Building2 className="w-3.5 h-3.5 text-purple-400" />
         </div>
         <h2 className="text-sm font-semibold text-foreground">{title}</h2>
-        <span className="ml-auto font-numeric text-sm font-bold text-foreground">{formatEur(bucketTotal)}</span>
+        <div className="ml-auto text-right">
+          <p className="font-numeric text-sm font-bold text-foreground">{formatEur(bucketTotal)}</p>
+          {showFundValues && <p className="text-[11px] text-muted-foreground">Fund {formatEur(sumFund(rows))}</p>}
+        </div>
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[520px] text-sm">
+        <table className="w-full min-w-[640px] text-sm">
           <thead>
             <tr className="border-b border-border/60" style={{ background: "hsl(222 35% 10%)" }}>
               <th className="text-left px-5 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Asset</th>
-              <th className="text-right px-5 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Approved Value</th>
+              <th className="text-right px-5 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">
+                {showFundValues ? "Your Value" : "Approved Value"}
+              </th>
+              {showFundValues && (
+                <th className="text-right px-5 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Fund Value</th>
+              )}
               <th className="text-right px-5 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Weight</th>
             </tr>
           </thead>
@@ -103,6 +123,13 @@ function BucketSection({ title, rows, total }: { title: string; rows: NonListedR
                   <td className="px-5 py-4 text-right">
                     <span className="font-numeric text-base font-bold text-purple-400">{formatEur(row.value)}</span>
                   </td>
+                  {showFundValues && (
+                    <td className="px-5 py-4 text-right">
+                      <span className="font-numeric text-sm font-semibold text-muted-foreground">
+                        {typeof row.fundValue === "number" ? formatEur(row.fundValue) : "-"}
+                      </span>
+                    </td>
+                  )}
                   <td className="px-5 py-4 text-right">
                     <div className="flex items-center justify-end gap-2">
                       <div className="w-16 h-1.5 rounded-full bg-secondary/60 overflow-hidden">
@@ -131,23 +158,33 @@ export default async function NonListedPage() {
   const investorName = cleanDisplayName(session.investorName);
   if (session.role === "investor" && !investorName) redirect("/login");
 
-  const snap = await getPortfolioSnapshot(session.role === "admin" ? undefined : investorName);
+  const isInvestorView = session.role === "investor";
+  const [snap, fundSnap] = await Promise.all([
+    getPortfolioSnapshot(isInvestorView ? investorName : undefined),
+    isInvestorView ? getPortfolioSnapshot() : Promise.resolve(null),
+  ]);
   const { composition, cutoffDate } = snap;
 
   const approvedRows = rowsFromApprovedSnapshot(snap);
+  const fundRows = fundSnap ? rowsFromApprovedSnapshot(fundSnap) : null;
   const liveRows = approvedRows ? [] : await getLatestManualRows("non_listed");
-  const rows: NonListedRow[] = approvedRows ?? liveRows.map((r) => ({
-    key: r.itemKey,
-    label: r.holdingName ?? r.displayName,
-    bucket: bucketForKey(r.itemKey),
-    value: r.value,
-    date: r.valueDate,
-  }));
+  const rows: NonListedRow[] = approvedRows
+    ? withFundValues(approvedRows, fundRows)
+    : liveRows.map((r) => ({
+        key: r.itemKey,
+        label: r.holdingName ?? r.displayName,
+        bucket: bucketForKey(r.itemKey),
+        value: r.value,
+        date: r.valueDate,
+      }));
 
   const total = rows.length > 0 ? sum(rows) : composition.nonListed;
+  const fundTotal = fundRows && fundRows.length > 0 ? sum(fundRows) : fundSnap?.composition.nonListed ?? null;
   const participations = rows.filter((row) => row.bucket === "participation");
   const loans = rows.filter((row) => row.bucket === "loan");
   const other = rows.filter((row) => row.bucket === "other");
+  const fundParticipationTotal = sumFund(participations);
+  const fundLoanTotal = sumFund(loans);
 
   return (
     <div className="space-y-5 pb-10 animate-fade-in">
@@ -163,10 +200,14 @@ export default async function NonListedPage() {
         style={{ background: "hsl(var(--card))", boxShadow: "var(--shadow-card)" }}
       >
         <div>
-          <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-widest mb-3">Total Non-Listed</p>
+          <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-widest mb-3">
+            {isInvestorView ? "Your Non-Listed Allocation" : "Total Non-Listed"}
+          </p>
           <p className="font-numeric text-5xl font-bold text-foreground leading-none">{formatEur(total)}</p>
           <p className="text-xs text-muted-foreground mt-2">
-            {rows.length > 0 ? `${rows.length} approved items` : "No approved item breakdown in this snapshot"}
+            {isInvestorView && fundTotal !== null
+              ? `Fund total ${formatEur(fundTotal)}`
+              : rows.length > 0 ? `${rows.length} approved items` : "No approved item breakdown in this snapshot"}
           </p>
         </div>
         <div className="p-4 rounded-xl bg-purple-500/10 border border-purple-500/20">
@@ -181,7 +222,9 @@ export default async function NonListedPage() {
             <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-widest">Private Participations</p>
           </div>
           <p className="font-numeric text-3xl font-bold text-foreground">{formatEur(sum(participations))}</p>
-          <p className="text-xs text-muted-foreground mt-2">{participations.length} approved values</p>
+          <p className="text-xs text-muted-foreground mt-2">
+            {isInvestorView && fundParticipationTotal > 0 ? `Fund total ${formatEur(fundParticipationTotal)}` : `${participations.length} approved values`}
+          </p>
         </div>
 
         <div className="rounded-2xl border border-border/60 p-5 bg-secondary/20">
@@ -190,7 +233,9 @@ export default async function NonListedPage() {
             <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-widest">Private Loan Principal</p>
           </div>
           <p className="font-numeric text-3xl font-bold text-foreground">{formatEur(sum(loans))}</p>
-          <p className="text-xs text-muted-foreground mt-2">{loans.length} principal balances</p>
+          <p className="text-xs text-muted-foreground mt-2">
+            {isInvestorView && fundLoanTotal > 0 ? `Fund total ${formatEur(fundLoanTotal)}` : `${loans.length} principal balances`}
+          </p>
         </div>
       </div>
 
