@@ -89,6 +89,17 @@ Optional AI audit support for Directa uploads:
 ```bash
 OPENAI_API_KEY=<key>
 OPENAI_AUDIT_MODEL=gpt-4o-mini
+ENABLE_EXTERNAL_AI_REVIEW=false # set true only if external AI review is approved
+ANTHROPIC_API_KEY=<key>
+ENABLE_EXTERNAL_AI_CLASSIFIER=false # set true only if external AI classification is approved
+```
+
+Raw upload retention:
+
+```bash
+SENSITIVE_UPLOAD_RETENTION_DAYS=90
+npm run security:purge-sensitive-uploads
+npm run security:purge-sensitive-uploads -- --execute
 ```
 
 Optional bootstrap overrides:
@@ -122,3 +133,4 @@ npm run build
 - `db:bootstrap` is the deploy-time empty-database path: migrate first, seed the approved tracker starting snapshot second.
 - `pg` remains a dependency only as Prisma's PostgreSQL adapter transport; application and tests use Prisma.
 - The monthly Directa workflow is handled by the admin UI and API routes; the tracker seed is only starting knowledge.
+- `security:purge-sensitive-uploads` is a dry run unless `-- --execute` is passed. It removes old raw CSV/PDF/audit workbook blobs while leaving published portfolio snapshots intact.

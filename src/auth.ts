@@ -8,16 +8,13 @@ export type Role = "investor" | "admin";
 type AuthUser = { email: string; password?: string; passwordHash?: string; role: Role; investorName?: string };
 
 const hardcodedDevUsers: AuthUser[] = [
-  { email: "admin@arietecapital.com", password: "admintest", role: "admin" },
-  { email: "osy@arietecapital.com", password: "osy123", role: "investor", investorName: "Osy Harrison" },
+  { email: "local-admin@example.test", password: "local-admin-password", role: "admin" },
   {
-    email: "bradley@arietecapital.com",
-    password: "bradley123",
+    email: "local-investor@example.test",
+    password: "local-investor-password",
     role: "investor",
-    investorName: "Bradley Jackson",
+    investorName: "Local Investor",
   },
-  { email: "grant@arietecapital.com", password: "grant123", role: "investor", investorName: "Grant Kauffman" },
-  { email: "esra@arietecapital.com", password: "esra123", role: "investor", investorName: "Esra Sertoglu" },
 ];
 
 const DUMMY_BCRYPT_HASH = "$2a$12$u8.WK00NQ4rLObYFEYA04OqSuU/CGGaRw85vRFMH6K2HGA0MH65.i";
@@ -139,7 +136,7 @@ export const authConfig: NextAuthConfig = {
   },
   session: {
     strategy: "jwt",
-    maxAge: 60 * 60 * 24, // 1 day (was 7 days)
+    maxAge: 60 * 60 * 8,
   },
   trustHost: env.AUTH_TRUST_HOST || Boolean(process.env.VERCEL),
   secret: env.JWT_SECRET,

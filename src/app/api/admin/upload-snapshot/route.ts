@@ -13,6 +13,7 @@ import {
   type ReviewCheck,
   type UploadedCsv,
 } from "@/lib/directa-upload-checks";
+import { DIRECTA_UPLOAD_LIMITS, formatBytes, totalUploadBytes } from "@/lib/upload-limits";
 import { buildAuditWorkbookBuffer } from "@/lib/audit-workbook";
 import {
   checkWarnings,
@@ -269,16 +270,29 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid form data" }, { status: 400 });
   }
 
-  const MAX_CSV_BYTES = 10 * 1024 * 1024; // 10 MB per CSV/PDF
-  const MAX_MANUAL_INPUTS_BYTES = 64 * 1024; // 64 KB
-
   const uploadedFiles = formData.getAll("files") as File[];
   if (uploadedFiles.length === 0) {
     return NextResponse.json({ error: "No Directa files uploaded" }, { status: 400 });
   }
+  if (uploadedFiles.length > DIRECTA_UPLOAD_LIMITS.maxFiles) {
+    return NextResponse.json(
+      { error: `Upload at most ${DIRECTA_UPLOAD_LIMITS.maxFiles} Directa files at a time` },
+      { status: 413 }
+    );
+  }
+  const totalBytes = totalUploadBytes(uploadedFiles);
+  if (totalBytes > DIRECTA_UPLOAD_LIMITS.maxTotalBytes) {
+    return NextResponse.json(
+      { error: `Upload batch exceeds the ${formatBytes(DIRECTA_UPLOAD_LIMITS.maxTotalBytes)} total limit` },
+      { status: 413 }
+    );
+  }
   for (const file of uploadedFiles) {
-    if (file.size > MAX_CSV_BYTES) {
-      return NextResponse.json({ error: `File "${file.name}" exceeds the 10 MB per-file limit` }, { status: 413 });
+    if (file.size > DIRECTA_UPLOAD_LIMITS.maxFileBytes) {
+      return NextResponse.json(
+        { error: `File "${file.name}" exceeds the ${formatBytes(DIRECTA_UPLOAD_LIMITS.maxFileBytes)} per-file limit` },
+        { status: 413 }
+      );
     }
     const lowerName = file.name.toLowerCase();
     if (!lowerName.endsWith(".csv") && !lowerName.endsWith(".pdf")) {
@@ -298,7 +312,7 @@ export async function POST(req: NextRequest) {
   };
   let formManualItems: ManualInputItem[] | null = null;
   if (manualInputsRaw) {
-    if (manualInputsRaw.length > MAX_MANUAL_INPUTS_BYTES) {
+    if (manualInputsRaw.length > DIRECTA_UPLOAD_LIMITS.maxManualInputsBytes) {
       return NextResponse.json({ error: "manualInputs payload too large" }, { status: 413 });
     }
     try {

@@ -8,10 +8,10 @@ import { getTestPrisma } from "./prisma-test-client";
 type Env = Record<string, string>;
 
 const env = loadLocalEnv();
-const adminEmail = process.env.E2E_ADMIN_EMAIL ?? "admin@arietecapital.com";
-const adminPassword = process.env.E2E_ADMIN_PASSWORD ?? "admintest";
-const investorEmail = process.env.E2E_INVESTOR_EMAIL ?? "osy@arietecapital.com";
-const investorPassword = process.env.E2E_INVESTOR_PASSWORD ?? "osy123";
+const adminEmail = process.env.E2E_ADMIN_EMAIL ?? env.E2E_ADMIN_EMAIL ?? "local-admin@example.test";
+const adminPassword = process.env.E2E_ADMIN_PASSWORD ?? env.E2E_ADMIN_PASSWORD ?? "";
+const investorEmail = process.env.E2E_INVESTOR_EMAIL ?? env.E2E_INVESTOR_EMAIL ?? "local-investor@example.test";
+const investorPassword = process.env.E2E_INVESTOR_PASSWORD ?? env.E2E_INVESTOR_PASSWORD ?? "";
 const databaseUrl = process.env.DATABASE_URL ?? env.DATABASE_URL;
 const databaseSsl = process.env.DATABASE_SSL ?? env.DATABASE_SSL;
 
@@ -26,6 +26,7 @@ type SnapshotPayload = {
 
 test.describe.configure({ mode: "serial" });
 test.skip(!databaseUrl, "E2E needs DATABASE_URL in env/.env");
+test.skip(!adminPassword || !investorPassword, "E2E needs explicit E2E admin and investor passwords");
 
 test.beforeAll(async () => {
   await cleanup();
