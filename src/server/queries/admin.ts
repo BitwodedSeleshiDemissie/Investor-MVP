@@ -3,6 +3,7 @@ import { calculateCashOutsideBrokerage } from "@/lib/cash";
 import {
   AGGREGATE_PRIVATE_LOAN_KEY,
   AGGREGATE_PRIVATE_PARTICIPATIONS_KEY,
+  CASH_OUTSIDE_DIRECTA_KEY,
   isDetailedParticipationKey,
   isDetailedPrivateLoanKey,
 } from "@/lib/manual-entry-keys";
@@ -257,10 +258,12 @@ function getSourceRecordCashOutsideBrokerage(value: unknown): number {
     const itemType = item.item_type.toLowerCase();
     return (
       itemType === "cash" ||
-      item.item_key === "CASH_OUTSIDE_DIRECTA"
+      item.item_key === CASH_OUTSIDE_DIRECTA_KEY
     );
   });
-  if (cashItems.length > 0) return cashItems.reduce((sum, item) => sum + Number(item.value || 0), 0);
+  const officialCashItems = cashItems.filter((item) => item.item_key === CASH_OUTSIDE_DIRECTA_KEY);
+  const selectedCashItems = officialCashItems.length > 0 ? officialCashItems : cashItems;
+  if (selectedCashItems.length > 0) return selectedCashItems.reduce((sum, item) => sum + Number(item.value || 0), 0);
   const externalCash = Number(snap.overlaySources?.externalCash ?? 0);
   if (externalCash > 0) return externalCash;
   const totalCash = Number(snap.composition?.cash ?? 0);
@@ -277,7 +280,7 @@ export async function getFixedPortfolioValues(): Promise<FixedPortfolioValues> {
   if (!dbEnabled()) return empty;
   const prisma = getPrisma();
 
-  const KEYS = [AGGREGATE_PRIVATE_PARTICIPATIONS_KEY, AGGREGATE_PRIVATE_LOAN_KEY, "CASH_OUTSIDE_DIRECTA"];
+  const KEYS = [AGGREGATE_PRIVATE_PARTICIPATIONS_KEY, AGGREGATE_PRIVATE_LOAN_KEY, CASH_OUTSIDE_DIRECTA_KEY];
 
   const [latestRows, historyRows, snapRows, profileCapitalRows, participationLedgerRows, loanLedgerRows, controlRow] = await Promise.all([
     prisma.$queryRaw<Array<{ item_key: string; item_type: string | null; value: string }>>`
@@ -356,15 +359,17 @@ export async function getFixedPortfolioValues(): Promise<FixedPortfolioValues> {
   const manualNonListedRows = latestRows.filter((row) => {
     const itemType = (row.item_type ?? "").toLowerCase();
     if (itemType) return itemType !== "cash";
-    return row.item_key !== "CASH_OUTSIDE_DIRECTA" && !row.item_key.includes("CASH");
+    return row.item_key !== CASH_OUTSIDE_DIRECTA_KEY && !row.item_key.includes("CASH");
   });
   const manualCashRows = latestRows.filter((row) => {
     const itemType = (row.item_type ?? "").toLowerCase();
     if (itemType) return itemType === "cash";
-    return row.item_key === "CASH_OUTSIDE_DIRECTA" || row.item_key.includes("CASH");
+    return row.item_key === CASH_OUTSIDE_DIRECTA_KEY || row.item_key.includes("CASH");
   });
   const manualNonListedValue = manualNonListedRows.reduce((sum, row) => sum + Number(row.value), 0);
-  const manualCashOutside = manualCashRows.reduce((sum, row) => sum + Number(row.value), 0);
+  const officialCashOutsideRows = manualCashRows.filter((row) => row.item_key === CASH_OUTSIDE_DIRECTA_KEY);
+  const cashOutsideRows = officialCashOutsideRows.length > 0 ? officialCashOutsideRows : manualCashRows;
+  const manualCashOutside = cashOutsideRows.reduce((sum, row) => sum + Number(row.value), 0);
   const snap = parseSnapshotPayload(snapRows[0]?.payload);
   const statementCash = Number(snapRows[0]?.direct_cash ?? 0);
   const snapshotNonListed = Number(snap?.composition?.nonListed ?? 0);
@@ -383,12 +388,12 @@ export async function getFixedPortfolioValues(): Promise<FixedPortfolioValues> {
     nonListedValue: effectiveNonListed,
   });
   const sourceRecordCashOutside = getSourceRecordCashOutsideBrokerage(snapRows[0]?.payload);
-  const cashOutsideDirecta = manualCashRows.length > 0
+  const cashOutsideDirecta = cashOutsideRows.length > 0
     ? manualCashOutside
     : sourceRecordCashOutside > 0
       ? sourceRecordCashOutside
       : calculatedCashOutside;
-  const cashOutsideDirectaSource = manualCashRows.length > 0
+  const cashOutsideDirectaSource = cashOutsideRows.length > 0
     ? "manual"
     : sourceRecordCashOutside > 0
       ? "source_record"
@@ -419,7 +424,7 @@ export async function getFixedPortfolioValues(): Promise<FixedPortfolioValues> {
         asOfDate,
         privateParticipations: dParticipations > 0 ? dParticipations : balancesByKey.get(AGGREGATE_PRIVATE_PARTICIPATIONS_KEY) ?? 0,
         privateLoanPrincipal: dLoans > 0 ? dLoans : balancesByKey.get(AGGREGATE_PRIVATE_LOAN_KEY) ?? 0,
-        cashOutsideDirecta: balancesByKey.get("CASH_OUTSIDE_DIRECTA") ?? 0,
+        cashOutsideDirecta: balancesByKey.get(CASH_OUTSIDE_DIRECTA_KEY) ?? 0,
         itemKeys: [...itemKeys],
       };
     });

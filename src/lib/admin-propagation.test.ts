@@ -208,6 +208,27 @@ describe("getFixedPortfolioValues — reads admin-entered values", () => {
     expect(result.statementCash).toBe(250_000);
   });
 
+  it("uses official outside cash instead of summing legacy tracker cash", async () => {
+    mockPrismaClient.$queryRaw
+      .mockResolvedValueOnce([
+        { item_key: "TRACKER_EXTERNAL_CASH_DIFFERENCE", item_type: "Cash", value: "524375.71" },
+        { item_key: "CASH_OUTSIDE_DIRECTA", item_type: "Cash", value: "120000" },
+      ])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{
+        direct_cash: "250000",
+        payload: makeSourceRecordPayload({ composition: { listed: 100_000, nonListed: 550_000, cash: 350_000, total: 1_000_000 } }),
+      }])
+      .mockResolvedValueOnce([{ capital_committed: "1000000" }])
+      .mockResolvedValueOnce([{ value: "0", row_count: 0 }])
+      .mockResolvedValueOnce([{ value: "0", row_count: 0 }]);
+
+    const result = await getFixedPortfolioValues();
+
+    expect(result.cashOutsideDirecta).toBe(120_000);
+    expect(result.cashOutsideDirectaSource).toBe("manual");
+  });
+
   it("falls back to source record cash when no live cash row exists", async () => {
     const source = makeSourceRecordPayload();
     source.kpis.capitalCommitted = 0;
@@ -727,6 +748,37 @@ describe("manual-defaults API — pre-fills upload UI with latest admin values",
     const body = (await response.json()) as { items: Array<{ item_key: string; latest_value: string | null }> };
 
     expect(body.items[0].latest_value).toBeNull();
+  });
+
+  it("removes legacy tracker outside cash when official outside cash exists", async () => {
+    mockPrismaClient.$queryRaw
+      .mockResolvedValueOnce([
+        {
+          item_key: "TRACKER_EXTERNAL_CASH_DIFFERENCE",
+          display_name: "External Cash Difference",
+          item_type: "Cash",
+          subcategory: "Outside Directa Cash",
+          latest_value: "524375.71",
+          latest_date: "2026-05-31",
+        },
+        {
+          item_key: "CASH_OUTSIDE_DIRECTA",
+          display_name: "Cash Outside Brokerage",
+          item_type: "Cash",
+          subcategory: "Cash Outside Brokerage",
+          latest_value: "120000",
+          latest_date: "2026-06-30",
+        },
+      ])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    const response = await manualDefaultsGet();
+    const body = (await response.json()) as { items: Array<{ item_key: string; latest_value: string | null }> };
+
+    expect(body.items).toEqual([
+      expect.objectContaining({ item_key: "CASH_OUTSIDE_DIRECTA", latest_value: "120000" }),
+    ]);
   });
 
   it("returns register-backed defaults when detailed manual values are missing", async () => {

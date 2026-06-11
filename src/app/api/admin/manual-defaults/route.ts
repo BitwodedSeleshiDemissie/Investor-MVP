@@ -4,6 +4,8 @@ import { getSession } from "@/lib/auth";
 import {
   AGGREGATE_PRIVATE_LOAN_KEY,
   AGGREGATE_PRIVATE_PARTICIPATIONS_KEY,
+  CASH_OUTSIDE_DIRECTA_KEY,
+  LEGACY_TRACKER_EXTERNAL_CASH_KEY,
   participationItemKey,
   privateLoanItemKey,
 } from "@/lib/manual-entry-keys";
@@ -59,6 +61,15 @@ function mergeLedgerDefaults(
     }
   }
   return merged;
+}
+
+function removeLegacyOutsideCashWhenOfficialExists(rows: ManualDefaultRow[]): ManualDefaultRow[] {
+  const official = rows.find((row) => row.item_key === CASH_OUTSIDE_DIRECTA_KEY && row.latest_value !== null);
+  if (!official) return rows;
+  return rows.filter((row) => {
+    const subcategory = row.subcategory.toLowerCase();
+    return row.item_key !== LEGACY_TRACKER_EXTERNAL_CASH_KEY && !subcategory.includes("outside directa cash");
+  });
 }
 
 export async function GET() {
@@ -150,9 +161,10 @@ export async function GET() {
     rows = mergeLedgerDefaults(rows, loanLedgerRows, {
       keyForName: privateLoanItemKey,
       subcategory: "Private Loan",
-      sortBeforeKey: "CASH_OUTSIDE_DIRECTA",
+      sortBeforeKey: CASH_OUTSIDE_DIRECTA_KEY,
     });
   }
+  rows = removeLegacyOutsideCashWhenOfficialExists(rows);
 
   return NextResponse.json({ items: rows });
 }

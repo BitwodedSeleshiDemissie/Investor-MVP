@@ -3,6 +3,7 @@ import { cleanDisplayName } from "@/lib/auth";
 import { calculateCashOutsideBrokerage } from "@/lib/cash";
 import { recomputeRiskFromTimeseries } from "@/lib/calculations";
 import { resolveIsin } from "@/lib/isin";
+import { CASH_OUTSIDE_DIRECTA_KEY } from "@/lib/manual-entry-keys";
 import {
   calculationSettings,
   DEFAULT_FUND_SETTINGS,
@@ -369,6 +370,8 @@ async function overlayAdminValues(snapshot: PortfolioSnapshot): Promise<Portfoli
 
   const nonListedRows = manualRows.filter((row) => row.item_type.toLowerCase() !== "cash");
   const cashRows = manualRows.filter((row) => row.item_type.toLowerCase() === "cash");
+  const officialCashRows = cashRows.filter((row) => row.item_key === CASH_OUTSIDE_DIRECTA_KEY);
+  const cashOutsideRows = officialCashRows.length > 0 ? officialCashRows : cashRows;
   const nonListed = nonListedRows.length > 0
     ? nonListedRows.reduce((sum, row) => sum + Number(row.value), 0)
     : result.composition.nonListed;
@@ -376,10 +379,10 @@ async function overlayAdminValues(snapshot: PortfolioSnapshot): Promise<Portfoli
   const sourceRecordCashOutsideBrokerage = Number(
     result.overlaySources?.externalCash ?? Math.max(0, Number(result.composition?.cash ?? 0) - statementCash)
   );
-  const manualCashOutsideBrokerage = cashRows.reduce((sum, row) => sum + Number(row.value), 0);
+  const manualCashOutsideBrokerage = cashOutsideRows.reduce((sum, row) => sum + Number(row.value), 0);
   const cashOutsideBrokerage = keepSourceInvestorValuation
-    ? (cashRows.length > 0 ? manualCashOutsideBrokerage : sourceRecordCashOutsideBrokerage) + postCutoffCapital
-    : cashRows.length > 0
+    ? (cashOutsideRows.length > 0 ? manualCashOutsideBrokerage : sourceRecordCashOutsideBrokerage) + postCutoffCapital
+    : cashOutsideRows.length > 0
       ? manualCashOutsideBrokerage
       : hasLiveCapital
         ? calculateCashOutsideBrokerage({

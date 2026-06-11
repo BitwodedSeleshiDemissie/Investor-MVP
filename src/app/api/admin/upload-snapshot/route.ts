@@ -30,6 +30,7 @@ import {
 } from "@/lib/calculations";
 import { getSession } from "@/lib/auth";
 import { calculationSettings, getFundSettings } from "@/server/fund-settings";
+import { CASH_OUTSIDE_DIRECTA_KEY } from "@/lib/manual-entry-keys";
 import {
   buildDirectaSourceData,
   monthEndFromFilename,
@@ -146,6 +147,13 @@ function setWorkbookCashMetrics(args: {
   args.workbook.portfolioMetrics["Cash Outside Brokerage"] = args.cashOutsideBrokerage;
   args.workbook.portfolioMetrics["Total Cash"] = totalCash;
   args.workbook.portfolioMetrics["Total Portfolio Value"] = totalPortfolioValue;
+}
+
+function sumExternalCash(items: Array<{ item_key: string; item_type: string; value: number }>): number {
+  const cashItems = items.filter((item) => item.item_type.toLowerCase() === "cash");
+  const officialCashItems = cashItems.filter((item) => item.item_key === CASH_OUTSIDE_DIRECTA_KEY);
+  const selectedCashItems = officialCashItems.length > 0 ? officialCashItems : cashItems;
+  return selectedCashItems.reduce((sum, item) => sum + Number(item.value), 0);
 }
 
 function buildReviewSummary(args: {
@@ -424,9 +432,7 @@ export async function POST(req: NextRequest) {
   const nonListedValue = formManualItems
     .filter((item) => item.item_type.toLowerCase() !== "cash")
     .reduce((s, item) => s + Number(item.value), 0);
-  const externalCash = formManualItems
-    .filter((item) => item.item_type.toLowerCase() === "cash")
-    .reduce((s, item) => s + Number(item.value), 0);
+  const externalCash = sumExternalCash(formManualItems);
 
   const [controlRow, fundSettings, profileRows] = await Promise.all([
     prisma.admin_controls.findFirst({

@@ -8,7 +8,7 @@ import {
   saveFundSettings as persistFundSettings,
   type FundSettings,
 } from "@/server/fund-settings";
-import { AGGREGATE_PRIVATE_LOAN_KEY, participationItemKey, privateLoanItemKey } from "@/lib/manual-entry-keys";
+import { AGGREGATE_PRIVATE_LOAN_KEY, CASH_OUTSIDE_DIRECTA_KEY, participationItemKey, privateLoanItemKey } from "@/lib/manual-entry-keys";
 
 const dictionarySchema = z.object({
   itemKey: z.string().min(1).max(100),
@@ -127,9 +127,9 @@ export const saveCashOutsideDirecta = adminAction
     const prisma = getPrisma();
     await prisma.$transaction(async (tx) => {
       await tx.asset_dictionary.upsert({
-        where: { item_key: "CASH_OUTSIDE_DIRECTA" },
+        where: { item_key: CASH_OUTSIDE_DIRECTA_KEY },
         create: {
-          item_key: "CASH_OUTSIDE_DIRECTA",
+          item_key: CASH_OUTSIDE_DIRECTA_KEY,
           display_name: "Cash Outside Brokerage",
           item_type: "Cash",
           subcategory: "Cash Outside Brokerage",
@@ -152,7 +152,7 @@ export const saveCashOutsideDirecta = adminAction
       await tx.admin_manual_values.create({
         data: {
           as_of_date: new Date(parsedInput.valueDate),
-          item_key: "CASH_OUTSIDE_DIRECTA",
+          item_key: CASH_OUTSIDE_DIRECTA_KEY,
           value: parsedInput.value,
           currency: "EUR",
           valuation_source: "CEO manual input",
