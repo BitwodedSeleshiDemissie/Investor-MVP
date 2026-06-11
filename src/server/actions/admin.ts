@@ -27,6 +27,11 @@ const manualValueSchema = z.object({
   holdingName: z.string().optional(),
 });
 
+const cashOutsideDirectaSchema = z.object({
+  valueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  value: z.coerce.number().nonnegative(),
+});
+
 const controlSchema = z.object({
   asOfDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   capitalCommitted: z.coerce.number().nonnegative(),
@@ -111,6 +116,50 @@ export const saveManualValue = adminAction
         valuation_method: valuationMethod,
         notes: parsedInput.holdingName ?? "",
       },
+    });
+    return { success: true };
+  });
+
+export const saveCashOutsideDirecta = adminAction
+  .schema(cashOutsideDirectaSchema)
+  .action(async ({ parsedInput }) => {
+    if (!dbEnabled()) return { error: "Database not configured" };
+    const prisma = getPrisma();
+    await prisma.$transaction(async (tx) => {
+      await tx.asset_dictionary.upsert({
+        where: { item_key: "CASH_OUTSIDE_DIRECTA" },
+        create: {
+          item_key: "CASH_OUTSIDE_DIRECTA",
+          display_name: "Cash Outside Brokerage",
+          item_type: "Cash",
+          subcategory: "Cash Outside Brokerage",
+          currency: "EUR",
+          active: true,
+          sort_order: 950,
+          notes: "Admin-entered outside brokerage cash balance",
+          updated_at: new Date(),
+        },
+        update: {
+          display_name: "Cash Outside Brokerage",
+          item_type: "Cash",
+          subcategory: "Cash Outside Brokerage",
+          currency: "EUR",
+          active: true,
+          sort_order: 950,
+          updated_at: new Date(),
+        },
+      });
+      await tx.admin_manual_values.create({
+        data: {
+          as_of_date: new Date(parsedInput.valueDate),
+          item_key: "CASH_OUTSIDE_DIRECTA",
+          value: parsedInput.value,
+          currency: "EUR",
+          valuation_source: "CEO manual input",
+          valuation_method: "Monthly outside brokerage cash balance",
+          notes: "",
+        },
+      });
     });
     return { success: true };
   });

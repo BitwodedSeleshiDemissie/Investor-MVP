@@ -78,6 +78,7 @@ vi.mock("next/server", () => ({
 import { getFixedPortfolioValues } from "../server/queries/admin";
 import { getPortfolioSnapshot } from "../server/queries/portfolio";
 import { GET as manualDefaultsGet } from "../app/api/admin/manual-defaults/route";
+import { saveCashOutsideDirecta } from "../server/actions/admin";
 import { getSession } from "@/lib/auth";
 
 // ─── Shared source record payload ─────────────────────────────────────────────────────
@@ -340,6 +341,45 @@ describe("manualInputs categorization — non-listed vs cash split", () => {
 });
 
 // ─── 3. Per-investor personalization from source record payload ──────────────────────
+
+describe("saveCashOutsideDirecta", () => {
+  beforeEach(() => {
+    mockPrismaClient.asset_dictionary.upsert.mockClear();
+    mockPrismaClient.admin_manual_values.create.mockClear();
+    mockPrismaClient.$transaction.mockClear();
+    vi.mocked(getSession).mockResolvedValue(
+      { role: "admin", email: "admin@test.com" } as Awaited<ReturnType<typeof getSession>>
+    );
+  });
+
+  it("creates the official outside-cash dictionary item and manual value", async () => {
+    const result = await saveCashOutsideDirecta({
+      valueDate: "2026-06-30",
+      value: 123_456,
+    });
+
+    expect(result?.data?.success).toBe(true);
+    expect(mockPrismaClient.asset_dictionary.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { item_key: "CASH_OUTSIDE_DIRECTA" },
+        create: expect.objectContaining({
+          item_key: "CASH_OUTSIDE_DIRECTA",
+          display_name: "Cash Outside Brokerage",
+          item_type: "Cash",
+        }),
+      })
+    );
+    expect(mockPrismaClient.admin_manual_values.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          item_key: "CASH_OUTSIDE_DIRECTA",
+          value: 123_456,
+          valuation_source: "CEO manual input",
+        }),
+      })
+    );
+  });
+});
 
 describe("getPortfolioSnapshot — per-investor slice from source record payload", () => {
   beforeEach(() => {

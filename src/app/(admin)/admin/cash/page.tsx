@@ -1,6 +1,8 @@
 import { Wallet, CreditCard, ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { getFixedPortfolioValues } from "@/server/queries/admin";
+import { dbEnabled } from "@/db/prisma";
+import { CashOutsideDirectaForm } from "@/components/admin/CashOutsideDirectaForm";
 import { formatEur } from "@/lib/utils";
 
 export default async function AdminCashPage() {
@@ -14,7 +16,7 @@ export default async function AdminCashPage() {
         <div>
           <h1 className="text-xl font-bold text-foreground tracking-tight">Cash</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Brokerage cash comes from the Directa PDF; cash outside brokerage is calculated automatically
+            Brokerage cash comes from the Directa PDF; cash outside brokerage is entered manually
           </p>
         </div>
         <Link
@@ -86,11 +88,21 @@ export default async function AdminCashPage() {
           </div>
           <h2 className="text-sm font-semibold text-foreground">Cash Outside Brokerage</h2>
         </div>
-        <div className="p-5 space-y-3 text-sm text-muted-foreground">
-          <p>Approved monthly cash outside brokerage is used when available. The residual formula is only a fallback.</p>
-          <div className="rounded-xl border border-border/50 bg-secondary/20 px-4 py-3 font-mono text-xs text-foreground">
-            Cash Outside Brokerage = Capital Committed - Listed Securities - Brokerage Account Cash - Non-listed Investments
-          </div>
+        <div className="p-5 space-y-4">
+          {!dbEnabled() ? (
+            <div className="py-8 text-center">
+              <Wallet className="w-10 h-10 text-muted-foreground/20 mx-auto mb-3" />
+              <p className="text-sm text-muted-foreground">Database not configured</p>
+              <p className="text-xs text-muted-foreground/60 mt-1">Add DATABASE_URL in .env.</p>
+            </div>
+          ) : (
+            <>
+              <CashOutsideDirectaForm currentValue={cashOutsideDirecta} />
+              <p className="text-xs text-muted-foreground">
+                This approved balance is used in the next Directa upload. The residual formula remains only as a fallback when no manual outside-cash value exists.
+              </p>
+            </>
+          )}
         </div>
       </div>
     </div>
