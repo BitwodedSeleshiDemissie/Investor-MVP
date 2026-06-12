@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dbEnabled } from "@/db/prisma";
 import { getSession } from "@/lib/auth";
+import { rejectCrossOriginRequest } from "@/lib/http-security";
 import { DIRECTA_UPLOAD_LIMITS, formatBytes, totalUploadBytes } from "@/lib/upload-limits";
 import { checkDirectaCsvDuplicate } from "@/server/directa-ingestion";
 
 export async function POST(req: NextRequest) {
+  const originRejection = rejectCrossOriginRequest(req);
+  if (originRejection) return originRejection;
+
   const session = await getSession();
   if (!session || session.role !== "admin") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });

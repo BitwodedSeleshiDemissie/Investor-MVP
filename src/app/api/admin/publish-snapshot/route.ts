@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dbEnabled, getPrisma } from "@/db/prisma";
 import { getSession } from "@/lib/auth";
+import { rejectCrossOriginRequest } from "@/lib/http-security";
 import type { PortfolioSnapshot } from "@/types/portfolio";
 import { canonicalCsvFilename } from "@/server/directa-ingestion";
 
@@ -114,6 +115,9 @@ async function syncApprovedManualItems(
 type PrismaTransaction = Parameters<Parameters<ReturnType<typeof getPrisma>["$transaction"]>[0]>[0];
 
 export async function POST(req: NextRequest) {
+  const originRejection = rejectCrossOriginRequest(req);
+  if (originRejection) return originRejection;
+
   const session = await getSession();
   if (!session || session.role !== "admin") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });

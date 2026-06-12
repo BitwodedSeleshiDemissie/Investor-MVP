@@ -1,6 +1,6 @@
-import { NextResponse } from "next/server";
 import { dbEnabled, getPrisma } from "@/db/prisma";
 import { getSession } from "@/lib/auth";
+import { noStoreJson } from "@/lib/http-security";
 import {
   AGGREGATE_PRIVATE_LOAN_KEY,
   AGGREGATE_PRIVATE_PARTICIPATIONS_KEY,
@@ -75,10 +75,10 @@ function removeLegacyOutsideCashWhenOfficialExists(rows: ManualDefaultRow[]): Ma
 export async function GET() {
   const session = await getSession();
   if (!session || session.role !== "admin") {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    return noStoreJson({ error: "Forbidden" }, { status: 403 });
   }
   if (!dbEnabled()) {
-    return NextResponse.json({ items: [] });
+    return noStoreJson({ items: [] });
   }
 
   const prisma = getPrisma();
@@ -166,5 +166,5 @@ export async function GET() {
   }
   rows = removeLegacyOutsideCashWhenOfficialExists(rows);
 
-  return NextResponse.json({ items: rows });
+  return noStoreJson({ items: rows });
 }

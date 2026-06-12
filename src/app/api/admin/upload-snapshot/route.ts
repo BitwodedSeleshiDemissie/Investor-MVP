@@ -29,6 +29,7 @@ import {
   xirrSafe,
 } from "@/lib/calculations";
 import { getSession } from "@/lib/auth";
+import { rejectCrossOriginRequest } from "@/lib/http-security";
 import { calculationSettings, getFundSettings } from "@/server/fund-settings";
 import { CASH_OUTSIDE_DIRECTA_KEY } from "@/lib/manual-entry-keys";
 import {
@@ -263,6 +264,9 @@ End with a one-line verdict: "Ready to publish." or "Needs manual review — [re
 }
 
 export async function POST(req: NextRequest) {
+  const originRejection = rejectCrossOriginRequest(req);
+  if (originRejection) return originRejection;
+
   const session = await getSession();
   if (!session || session.role !== "admin") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
