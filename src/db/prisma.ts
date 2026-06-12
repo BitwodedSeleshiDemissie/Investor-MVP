@@ -10,7 +10,9 @@ function getPrismaClient(): PrismaClient {
   if (!g.prisma) {
     const pool = new Pool({
       connectionString: env.DATABASE_URL!,
-      max: 10,
+      max: 1, // serverless: 1 conn/instance prevents exhausting the DB connection limit
+      idleTimeoutMillis: 10_000,
+      connectionTimeoutMillis: 10_000,
       ssl: env.DATABASE_SSL ? { rejectUnauthorized: true } : undefined,
     });
     const adapter = new PrismaPg(pool);
