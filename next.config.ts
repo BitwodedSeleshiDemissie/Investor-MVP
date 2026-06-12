@@ -30,7 +30,6 @@ const securityHeaders = [
   { key: "Permissions-Policy",       value: "camera=(), microphone=(), geolocation=()" },
   { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
   { key: "Cross-Origin-Embedder-Policy", value: "credentialless" },
-  { key: "Cross-Origin-Resource-Policy", value: "same-origin" },
   {
     key: "Content-Security-Policy",
     value: [
@@ -42,13 +41,9 @@ const securityHeaders = [
       "img-src 'self' data: blob:",
       "font-src 'self' data:",
       "style-src 'self' 'unsafe-inline'",
-      "script-src-attr 'none'",
       `script-src 'self' 'unsafe-inline'${process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : ""}`,
       "connect-src 'self'",
       "worker-src 'self' blob:",
-      "frame-src 'none'",
-      "child-src 'none'",
-      "media-src 'none'",
       "manifest-src 'self'",
       "upgrade-insecure-requests",
     ].join("; "),
@@ -58,32 +53,12 @@ const securityHeaders = [
   { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains" },
 ];
 
-const privateDataHeaders = [
-  { key: "Cache-Control", value: "no-store" },
-];
-
 const nextConfig: NextConfig = {
   output: "standalone",
   poweredByHeader: false,
   serverExternalPackages: ["pino", "pino-pretty", "pg", "xlsx"],
   async headers() {
     return [
-      {
-        source: "/admin/:path*",
-        headers: privateDataHeaders,
-      },
-      {
-        source: "/dashboard/:path*",
-        headers: privateDataHeaders,
-      },
-      {
-        source: "/api/admin/:path*",
-        headers: privateDataHeaders,
-      },
-      {
-        source: "/login",
-        headers: privateDataHeaders,
-      },
       {
         source: "/(.*)",
         headers: securityHeaders,

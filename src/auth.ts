@@ -18,7 +18,6 @@ const hardcodedDevUsers: AuthUser[] = [
 ];
 
 const DUMMY_BCRYPT_HASH = "$2a$12$u8.WK00NQ4rLObYFEYA04OqSuU/CGGaRw85vRFMH6K2HGA0MH65.i";
-const isProduction = process.env.NODE_ENV === "production";
 
 function normalizeUser(user: AuthUser): AuthUser | null {
   const email = user.email?.trim().toLowerCase();
@@ -42,7 +41,7 @@ function getUsers(): AuthUser[] {
       return [];
     }
   }
-  if (!isProduction && env.ALLOW_DEV_AUTH_USERS) return hardcodedDevUsers.map((user) => normalizeUser(user)!);
+  if (env.ALLOW_DEV_AUTH_USERS) return hardcodedDevUsers.map((user) => normalizeUser(user)!);
   return [];
 }
 
@@ -62,7 +61,7 @@ async function checkPassword(input: string, found: AuthUser | undefined): Promis
     const { compare } = await import("bcryptjs");
     return compare(input, found.passwordHash);
   }
-  if (found?.password && env.ALLOW_PLAINTEXT_AUTH_USERS && !isProduction) {
+  if (found?.password && env.ALLOW_PLAINTEXT_AUTH_USERS) {
     return constantTimePlaintextCompare(input, found.password);
   }
   const { compare } = await import("bcryptjs");
