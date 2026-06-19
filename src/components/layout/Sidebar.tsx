@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard, TrendingUp, Building2, Wallet,
-  Upload, Users, Menu, X, SlidersHorizontal, Eye,
+  Upload, Users, Menu, X, SlidersHorizontal, Eye, FileText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Role } from "@/lib/auth";
@@ -18,10 +18,11 @@ interface NavItem {
 }
 
 const investorNav: NavItem[] = [
-  { icon: LayoutDashboard, label: "Overview",    href: "/dashboard",            group: "Portfolio" },
-  { icon: TrendingUp,      label: "Listed",      href: "/dashboard/listed",     group: "Portfolio" },
-  { icon: Building2,       label: "Non-Listed",  href: "/dashboard/non-listed", group: "Portfolio" },
-  { icon: Wallet,          label: "Cash",        href: "/dashboard/cash",       group: "Portfolio" },
+  { icon: LayoutDashboard, label: "Overview",    href: "/dashboard",                group: "Portfolio" },
+  { icon: TrendingUp,      label: "Listed",      href: "/dashboard/listed",         group: "Portfolio" },
+  { icon: Building2,       label: "Non-Listed",  href: "/dashboard/non-listed",     group: "Portfolio" },
+  { icon: Wallet,          label: "Cash",        href: "/dashboard/cash",           group: "Portfolio" },
+  { icon: FileText,        label: "Disclaimer",  href: "/dashboard/disclaimer",     group: "Legal" },
 ];
 
 const adminNav: NavItem[] = [

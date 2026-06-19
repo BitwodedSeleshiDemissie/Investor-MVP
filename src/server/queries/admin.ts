@@ -486,6 +486,34 @@ export async function getPrivateLoanTransactions(): Promise<PrivateLoanTransacti
   }));
 }
 
+export async function getNonListedInvestedByInvestee(): Promise<Map<string, number>> {
+  if (!dbEnabled()) return new Map();
+  const prisma = getPrisma();
+  const rows = await prisma.$queryRaw<Array<{ investee: string; invested: string }>>`
+    SELECT investee,
+           COALESCE(SUM(CASE WHEN tipo = 'SELL' THEN -amount ELSE amount END), 0)::numeric::text AS invested
+    FROM non_listed_transactions
+    GROUP BY investee
+  `;
+  const map = new Map<string, number>();
+  for (const row of rows) map.set(row.investee.toLowerCase().trim(), Number(row.invested));
+  return map;
+}
+
+export async function getPrivateLoanInvestedByCounterparty(): Promise<Map<string, number>> {
+  if (!dbEnabled()) return new Map();
+  const prisma = getPrisma();
+  const rows = await prisma.$queryRaw<Array<{ counterparty: string; invested: string }>>`
+    SELECT counterparty,
+           COALESCE(SUM(CASE WHEN tipo = 'REPAYMENT' THEN -amount ELSE amount END), 0)::numeric::text AS invested
+    FROM private_loan_transactions
+    GROUP BY counterparty
+  `;
+  const map = new Map<string, number>();
+  for (const row of rows) map.set(row.counterparty.toLowerCase().trim(), Number(row.invested));
+  return map;
+}
+
 export async function getAdminData(): Promise<AdminData> {
   if (!dbEnabled()) {
     return { dictionary: [], manualValues: [], controls: [] };

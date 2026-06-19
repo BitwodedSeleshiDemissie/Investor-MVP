@@ -120,7 +120,7 @@ export default async function DashboardPage({ searchParams }: { searchParams?: D
     {
       title: "Investor IRR",
       value: irr.investorIrr != null ? formatPct(irr.investorIrr) : "-",
-      subvalue: `Fund IRR: ${irr.fundIrr != null ? formatPct(irr.fundIrr) : "-"}`,
+      subvalue: `Portfolio IRR: ${irr.fundIrr != null ? formatPct(irr.fundIrr) : "-"}`,
       icon: Activity,
       variant: "default",
       tooltip: GLOSSARY.investorIrr,
@@ -164,14 +164,15 @@ export default async function DashboardPage({ searchParams }: { searchParams?: D
         ))}
       </div>
 
-      <Section title="Portfolio Composition" icon={LayoutDashboard}>
-        <PortfolioCompositionBlock composition={composition} />
-      </Section>
-
-      <div id="allocation">
-        <Section title="Current Allocation" icon={PieChart}>
-          <AllocationChart data={allocation} />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+        <Section title="Portfolio Composition" icon={LayoutDashboard}>
+          <PortfolioCompositionBlock composition={composition} />
         </Section>
+        <div id="allocation">
+          <Section title="Current Allocation" icon={PieChart}>
+            <AllocationChart data={allocation} />
+          </Section>
+        </div>
       </div>
 
       <Section title="Risk Metrics" icon={Activity}>

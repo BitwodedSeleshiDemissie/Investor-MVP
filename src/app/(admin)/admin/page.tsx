@@ -6,8 +6,9 @@
 } from "lucide-react";
 import Link from "next/link";
 import { getAdminFreshness, getFixedPortfolioValues, getInvestorProfiles, getSnapshotHistory } from "@/server/queries/admin";
-import { dbEnabled } from "@/db/prisma";
+import { dbEnabled, withDbRetry } from "@/db/prisma";
 import { formatEur, formatDate, formatDateTime } from "@/lib/utils";
+import { SeedBaselineButton } from "./SeedBaselineButton";
 
 type SectionItem = {
   href: string;
@@ -22,12 +23,14 @@ type SectionItem = {
 
 export default async function AdminPage() {
   const isDbEnabled = dbEnabled();
-  const [portfolioValues, investorProfiles, snapshotHistory, adminFreshness] = await Promise.all([
-    getFixedPortfolioValues(),
-    getInvestorProfiles(),
-    getSnapshotHistory(),
-    getAdminFreshness(),
-  ]);
+  const [portfolioValues, investorProfiles, snapshotHistory, adminFreshness] = await withDbRetry(() =>
+    Promise.all([
+      getFixedPortfolioValues(),
+      getInvestorProfiles(),
+      getSnapshotHistory(),
+      getAdminFreshness(),
+    ])
+  );
 
   const {
     privateParticipations,
@@ -182,6 +185,30 @@ export default async function AdminPage() {
           </p>
         </div>
       </div>
+
+      {/* Bootstrap card — shown when DB is empty */}
+      {isDbEnabled && snapshotHistory.length === 0 && activeInvestors.length === 0 && (
+        <div
+          className="rounded-2xl border border-border/60 overflow-hidden"
+          style={{ background: "hsl(var(--card))", boxShadow: "var(--shadow-card)" }}
+        >
+          <div
+            className="flex items-center gap-2.5 px-5 py-4 border-b border-border/60"
+            style={{ background: "hsl(222 44% 7%)" }}
+          >
+            <div className="p-1.5 rounded-lg bg-secondary/60">
+              <Database className="w-3.5 h-3.5 text-muted-foreground" />
+            </div>
+            <h2 className="text-sm font-semibold text-foreground">Database is empty</h2>
+          </div>
+          <div className="px-5 py-5 space-y-3">
+            <p className="text-sm text-muted-foreground">
+              No snapshot or investor data found. Import the CEO Tracker baseline workbook to seed all tables — investors, manual values, and the first portfolio snapshot.
+            </p>
+            <SeedBaselineButton />
+          </div>
+        </div>
+      )}
 
       {/* Data freshness */}
       {latestPublished && (

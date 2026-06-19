@@ -1,4 +1,4 @@
-import { dbEnabled, getPrisma } from "@/db/prisma";
+import { dbEnabled, getPrisma, withDbRetry } from "@/db/prisma";
 import { cleanDisplayName } from "@/lib/auth";
 import { calculateCashOutsideBrokerage } from "@/lib/cash";
 import { recomputeRiskFromTimeseries } from "@/lib/calculations";
@@ -616,6 +616,7 @@ export async function getPortfolioSnapshot(investorName?: string): Promise<Portf
     );
   }
 
+  return withDbRetry(async () => {
   const settings = await getFundSettings();
   const row = await readLatestSnapshot();
   if (!row) {
@@ -644,4 +645,5 @@ export async function getPortfolioSnapshot(investorName?: string): Promise<Portf
     return applyInvestorPersonalization(result, investorName);
   }
   return result;
+  }); // withDbRetry
 }
