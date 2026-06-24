@@ -91,8 +91,8 @@ export function buildDeterministicChecks(args: {
   if (args.externalCash > 0) {
     checks.push({
       severity: "ok",
-      title: "Cash outside brokerage calculated",
-      detail: `Cash outside brokerage is ${formatMoney(args.externalCash)}, calculated as capital committed less listed value, brokerage cash, and non-listed investments.`,
+      title: "Cash outside brokerage confirmed",
+      detail: `Cash outside brokerage is ${formatMoney(args.externalCash)}, entered directly by the admin.`,
     });
   }
 

@@ -173,7 +173,7 @@ function buildReviewSummary(args: {
     ? ` Portfolio value changed by ${formatMoney(args.payload.kpis.totalPortfolioValue - previousTotal)} versus the previous published snapshot.`
     : "";
   const overlayText = args.externalCash > 0
-    ? ` Cash outside brokerage was calculated as the residual after capital committed, brokerage value, and non-listed investments.`
+    ? ` Cash outside brokerage (${formatMoney(args.externalCash)}) was entered directly by the admin.`
     : "";
   const lendingText = args.uploaded.some((file) => file.hasLendingOrCollateralRows)
     ? ` Directa lending/collateral rows were detected and folded into final positions where applicable.`
@@ -227,7 +227,7 @@ Questions to answer:
 2. Cash: Does the brokerage account cash figure from the Directa liquidity PDF make sense?
 3. Month-on-month change: Is the total portfolio change from last month within a plausible range, or does it need explanation?
 4. Lending / collateral: Were lending or collateral rows detected? Do they appear fully reconciled in the final positions?
-5. Non-Directa data: Are non-listed assets admin-entered and is cash outside brokerage calculated as the residual?
+5. Non-Directa data: Are non-listed assets admin-entered and is cash outside brokerage confirmed as the admin-entered value?
 
 End with a one-line verdict: "Ready to publish." or "Needs manual review — [reason]."`,
           },

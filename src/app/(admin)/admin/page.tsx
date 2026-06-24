@@ -68,10 +68,10 @@ export default async function AdminPage() {
       ok: totalNonListed > 0,
     },
     {
-      label: "Cash outside brokerage calculated",
+      label: "Cash outside brokerage",
       detail: cashOutsideDirecta > 0
-        ? `${formatEur(cashOutsideDirecta)} residual (brokerage cash ${formatEur(statementCash)} from Directa)`
-        : "No outside-brokerage cash residual",
+        ? `${formatEur(cashOutsideDirecta)} admin-entered (brokerage cash ${formatEur(statementCash)} from Directa)`
+        : "No outside-brokerage cash entered",
       ok: cashOutsideDirecta > 0,
     },
     {
@@ -105,7 +105,7 @@ export default async function AdminPage() {
           href: "/admin/cash",
           icon: Wallet,
           title: "Cash",
-          description: `Brokerage cash comes from the Directa PDF. Cash outside brokerage is calculated automatically.`,
+          description: `Brokerage cash comes from the Directa PDF. Cash outside brokerage is entered directly by the admin.`,
           stat: totalCash > 0
             ? `${formatEur(statementCash)} brokerage · ${formatEur(cashOutsideDirecta)} outside`
             : "No cash data",
@@ -303,7 +303,7 @@ export default async function AdminPage() {
             style={{ background: "hsl(222 44% 7%)" }}
           >
             <p className="text-sm font-semibold text-foreground">Current Portfolio Inputs</p>
-            <p className="text-xs text-muted-foreground mt-0.5">Manual non-listed values plus brokerage cash and residual cash used in the next snapshot</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Manual non-listed values plus brokerage cash and admin-entered outside cash used in the next snapshot</p>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-y sm:divide-y-0 divide-border/40">
             {[

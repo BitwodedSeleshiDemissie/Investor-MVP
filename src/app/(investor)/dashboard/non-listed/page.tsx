@@ -253,7 +253,7 @@ export default async function NonListedPage() {
         <p className="text-xs text-muted-foreground leading-relaxed">
           <span className="font-semibold text-foreground">Valuation methodology — </span>
           Non-listed assets are valued based on approved assessments reviewed periodically by the investment manager,
-          typically following material corporate events or on a quarterly basis. Methods may include recent
+          typically following material corporate events or on an annual basis. Methods may include recent
           transaction prices, management accounts, or comparable company analysis. Values reflect the most
           recently approved figures as of the date shown for each asset.
         </p>

@@ -24,7 +24,7 @@ export default function UploadDataPage() {
         <p className="font-semibold text-foreground text-sm mb-2">Source order</p>
         <p>- Upload Directa monthly CSVs for transactions, income, commissions, and audit history.</p>
         <p>- Upload the Directa PDF snapshot so listed holdings, ISINs, market value, and brokerage cash come from the official statement.</p>
-        <p>- Confirm manual non-listed values during the Directa upload. Cash outside brokerage is calculated automatically.</p>
+        <p>- Confirm manual non-listed values during the Directa upload. Cash outside brokerage is entered directly by the admin.</p>
       </div>
 
       <section className="space-y-3">
