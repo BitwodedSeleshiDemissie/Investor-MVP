@@ -13,7 +13,7 @@
     "prisma:generate": "prisma generate",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:resolve:init": "prisma migrate resolve --applied 000001_init",
-    "db:seed": "tsx scripts/seed-ceo-baseline.ts",
+    "db:seed": "tsx scripts/seed-ceo-baseline.ts && tsx scripts/seed-transaction-ledger.ts --apply",
     "db:bootstrap": "npm run prisma:deploy && npm run db:seed",
     "security:purge-sensitive-uploads": "tsx scripts/purge-sensitive-uploads.ts"
   },

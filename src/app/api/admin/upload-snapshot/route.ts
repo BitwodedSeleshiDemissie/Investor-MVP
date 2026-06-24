@@ -314,6 +314,8 @@ export async function POST(req: NextRequest) {
 
   const cutoffDateOverride = (formData.get("cutoffDateOverride") as string | null) ?? null;
   const manualInputsRaw = (formData.get("manualInputs") as string | null) ?? null;
+  const aliasOverridesRaw = (formData.get("aliasOverrides") as string | null) ?? null;
+  const aliasOverrides: Array<{ rawName: string; isin: string }> = aliasOverridesRaw ? JSON.parse(aliasOverridesRaw) : [];
 
   type ManualInputItem = {
     item_key: string;
@@ -408,6 +410,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "No valid CSV files found (expected .csv)" }, { status: 400 });
   }
 
+  // Persist any admin-supplied alias mappings before running ingest.
+  for (const { rawName, isin } of aliasOverrides) {
+    if (!rawName || !/^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(isin)) continue;
+    await prisma.security.upsert({
+      where: { isin },
+      create: { isin, name: rawName, currency: "EUR", assetClass: "EQUITY", priceConvention: "STRAIGHT" },
+      update: {},
+    });
+    await prisma.securityAlias.upsert({
+      where: { rawName },
+      create: { rawName, isin },
+      update: { isin },
+    });
+  }
+
   // Ingest CSV rows into the Transaction ledger (idempotent — ON CONFLICT DO NOTHING).
   // PDF must have been parsed first so Security/SecurityAlias rows are up to date.
   const ingestSkipped: Array<{ file: string; rowNumber: number; tradeDate: string; security: string; csvType: string; reason: string }> = [];
@@ -415,11 +432,8 @@ export async function POST(req: NextRequest) {
     const ingestResult = await ingestFromCsv(prisma, content, name, liquidityPdf);
     if (ingestResult.blockedNames.length > 0) {
       return NextResponse.json(
-        {
-          error: `CSV contains ${ingestResult.blockedNames.length} BUY/SELL row(s) with security names not found in the Security master. Add SecurityAlias entries for these names before re-uploading.`,
-          unknownNames: ingestResult.blockedNames,
-        },
-        { status: 422 }
+        { needsAliasMapping: true, unknownNames: ingestResult.blockedNames },
+        { status: 200 }
       );
     }
     for (const s of ingestResult.skipped) ingestSkipped.push({ file: name, ...s });

@@ -127,6 +127,8 @@ export function DirectaUpload() {
   const [result, setResult] = useState<ConfirmResult | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [duplicatePrompt, setDuplicatePrompt] = useState<DuplicatePrompt | null>(null);
+  const [aliasMappingPrompt, setAliasMappingPrompt] = useState<string[] | null>(null);
+  const [aliasInputs, setAliasInputs] = useState<Record<string, string>>({});
 
   function setMonth(ym: string) {
     if (/^\d{4}-\d{2}$/.test(ym)) setSelectedMonth(ym);
@@ -257,10 +259,22 @@ export function DirectaUpload() {
       )
     );
 
+    if (Object.keys(aliasInputs).length > 0) {
+      form.append("aliasOverrides", JSON.stringify(
+        Object.entries(aliasInputs).map(([rawName, isin]) => ({ rawName, isin: isin.trim().toUpperCase() }))
+      ));
+    }
+
     try {
       const resp = await fetch("/api/admin/upload-snapshot", { method: "POST", body: form });
       const json = await resp.json();
       if (!resp.ok) throw new Error(json.error ?? `HTTP ${resp.status}`);
+      if (json.needsAliasMapping && Array.isArray(json.unknownNames)) {
+        setAliasMappingPrompt(json.unknownNames as string[]);
+        setAliasInputs(Object.fromEntries((json.unknownNames as string[]).map((n: string) => [n, ""])));
+        setStatus("idle");
+        return;
+      }
       setResult({
         snapshotId: json.snapshotId,
         cutoffDate: json.cutoffDate,
@@ -477,6 +491,60 @@ export function DirectaUpload() {
             <X className="w-3.5 h-3.5" />
             Clear selection
           </button>
+        </div>
+      )}
+
+      {aliasMappingPrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 px-4 backdrop-blur-sm">
+          <div
+            className="w-full max-w-md rounded-2xl border border-border/70 overflow-hidden"
+            style={{ background: "hsl(var(--card))", boxShadow: "var(--shadow-card)" }}
+          >
+            <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-border/60">
+              <h3 className="text-sm font-bold text-foreground">Unknown Security Name</h3>
+              <button
+                onClick={() => { setAliasMappingPrompt(null); setAliasInputs({}); setStatus("idle"); }}
+                className="rounded-lg p-1.5 text-muted-foreground/60 hover:bg-secondary/50 hover:text-foreground"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="px-5 py-4 space-y-4">
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                The CSV contains BUY/SELL rows for securities not yet in the master list. Enter the ISIN for each name below — this mapping will be saved permanently so it never blocks again.
+              </p>
+              {aliasMappingPrompt.map((name) => (
+                <div key={name} className="space-y-1.5">
+                  <p className="font-mono text-xs text-foreground bg-secondary/30 rounded-lg px-3 py-2 break-all">{name}</p>
+                  <input
+                    type="text"
+                    placeholder="ISIN (e.g. NL0009690239)"
+                    maxLength={12}
+                    value={aliasInputs[name] ?? ""}
+                    onChange={(e) => setAliasInputs((prev) => ({ ...prev, [name]: e.target.value }))}
+                    className="w-full rounded-xl border border-border/60 bg-background/60 px-3 py-2 text-sm font-mono text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/50"
+                  />
+                </div>
+              ))}
+            </div>
+
+            <div className="flex gap-3 px-5 pb-5">
+              <button
+                onClick={() => { setAliasMappingPrompt(null); setAliasInputs({}); setStatus("idle"); }}
+                className="flex-1 rounded-xl border border-border/60 py-2.5 text-sm font-semibold text-foreground hover:bg-secondary/40 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                disabled={aliasMappingPrompt.some((n) => !/^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test((aliasInputs[n] ?? "").trim().toUpperCase()))}
+                onClick={() => { setAliasMappingPrompt(null); handleProcess({ skipDuplicateCheck: true }); }}
+                className="flex-1 rounded-xl bg-primary py-2.5 text-sm font-bold text-primary-foreground transition-opacity disabled:opacity-40"
+              >
+                Confirm & Continue
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

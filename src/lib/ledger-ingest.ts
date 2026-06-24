@@ -114,7 +114,7 @@ export async function ingestFromCsv(
   // Lower-case key → ISIN; last entry wins for duplicates (shouldn't exist).
   const aliasMap = new Map<string, string>();
   for (const a of allAliases) {
-    aliasMap.set(a.rawName.toLowerCase().trim(), a.isin);
+    aliasMap.set(a.rawName.toLowerCase().trim().replace(/\s+/g, " "), a.isin);
   }
 
   // Build set of ISINs that have at least one BUY/OPENING/SELL trade for orphan check.
@@ -153,7 +153,7 @@ export async function ingestFromCsv(
     }
 
     // Resolve ISIN via SecurityAlias (case-insensitive).
-    const securityNameLower = row.security.toLowerCase().trim();
+    const securityNameLower = row.security.toLowerCase().trim().replace(/\s+/g, " ");
     const isin = aliasMap.get(securityNameLower) ?? null;
 
     if (!isin) {
