@@ -494,33 +494,6 @@ function tipoFromAssetClass(assetClass: string): Tipo {
   return "Other";
 }
 
-function openingRowsFromPreviousSnapshot(snapshot: PreviousSnapshotInput | undefined): RawRow[] {
-  if (!snapshot) return [];
-  const snapshotDate = parseDateOnly(snapshot.cutoffDate);
-  return snapshot.holdings
-    .filter((holding) => holding.shares > 0 && holding.marketValue > 0)
-    .map((holding) => {
-      const avgCostBasis = holding.avgCost > 0 ? holding.avgCost * holding.shares : 0;
-      const costBasis = holding.costBasis > 0 ? holding.costBasis : avgCostBasis || holding.marketValue;
-      const currentPrice = holding.currentPrice > 0 ? holding.currentPrice : holding.marketValue / holding.shares;
-      return {
-        sourceFile: "published snapshot opening positions",
-        fileDate: snapshotDate,
-        date: snapshotDate,
-        settlement: null,
-        security: holding.security,
-        isin: holding.isin || resolveIsin(holding.security),
-        reference: "Opening position from published snapshot",
-        price: currentPrice,
-        currency: holding.currency || "EUR",
-        quantity: holding.shares,
-        amount: -costBasis,
-        commission: 0,
-        type: "Buy",
-        tipo: tipoFromAssetClass(holding.assetClass),
-      };
-    });
-}
 
 function monthlyRowsFromPreviousSnapshot(snapshot: PreviousSnapshotInput | undefined): MonthlyReturnRow[] {
   if (!snapshot) return [];
@@ -845,11 +818,10 @@ export async function buildWorkbookDataFromParsedRows(
   parsedPositions: PositionPriceRow[],
   overlays: AdminOverlays
 ): Promise<WorkbookData> {
-  // Step 1: combine the previous published opening rows with persisted Directa rows.
-  const allRows: RawRow[] = [
-    ...openingRowsFromPreviousSnapshot(overlays.previousSnapshot ?? undefined),
-    ...parsedRows,
-  ];
+  // Step 1: persisted Directa rows for this month only.
+  // Cost-basis history comes from the Transaction ledger via injectLedgerCostBasis()
+  // called before applyPdfListedPositions() in the upload route.
+  const allRows: RawRow[] = [...parsedRows];
   const positions: PositionMap = new Map();
   for (const row of parsedPositions) {
     if (row.price > 0 || row.marketValue > 0) {

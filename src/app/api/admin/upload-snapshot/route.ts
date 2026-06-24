@@ -38,6 +38,9 @@ import {
   type DirectaSyncResult,
 } from "@/server/directa-ingestion";
 import { syncDirectaPdfFile } from "@/server/directa-pdf-ingestion";
+import { ingestFromCsv } from "@/lib/ledger-ingest";
+import { computeLedgerHoldings, injectLedgerCostBasis } from "@/lib/ledger-compute";
+import { reconcile } from "@/lib/ledger-reconcile";
 import type { InvestorPerf, PortfolioSnapshot } from "@/types/portfolio";
 import type { Prisma } from "@/generated/prisma/client";
 
@@ -104,14 +107,15 @@ function inferPdfAssetClass(security: string): string {
   return "Stocks";
 }
 
-function applyPdfListedPositions(workbook: WorkbookData, pdf: DirectaLiquidityPdf): void {
-  const byIsin = new Map(workbook.holdings.filter((h) => h.isin).map((h) => [h.isin, h]));
-  const byName = new Map(workbook.holdings.map((h) => [normalizeSecurityName(h.security), h]));
+function applyPdfListedPositions(workbook: WorkbookData, pdf: DirectaLiquidityPdf, fallbackHoldings?: HoldingRow[]): void {
+  const allSources = [...workbook.holdings, ...(fallbackHoldings ?? [])];
+  const byIsin = new Map(allSources.filter((h) => h.isin).map((h) => [h.isin, h]));
+  const byName = new Map(allSources.map((h) => [normalizeSecurityName(h.security), h]));
   const listedTotal = pdf.listedTotal || pdf.positions.reduce((sum, position) => sum + position.marketValue, 0);
 
   workbook.holdings = pdf.positions.map((position): HoldingRow => {
     const prior = byIsin.get(position.isin) ?? byName.get(normalizeSecurityName(position.security));
-    const costBasis = prior?.costBasis ?? position.marketValue;
+    const costBasis = (prior?.costBasis ?? 0) > 0 ? prior!.costBasis : position.marketValue;
     const unrealizedPnl = position.marketValue - costBasis;
     return {
       security: position.security,
@@ -385,6 +389,7 @@ export async function POST(req: NextRequest) {
   }
   const selectedCutoffDate = cutoffDateOverride ?? liquidityPdf.statementDate ?? new Date().toISOString().slice(0, 10);
 
+  const rawCsvContents: Array<{ name: string; content: string }> = [];
   for (const file of csvUploadFiles) {
     const content = await file.text();
     const csvMonthEnd = monthEndFromFilename(file.name) ?? selectedCutoffDate;
@@ -397,9 +402,27 @@ export async function POST(req: NextRequest) {
     });
     csvFilenames.push(synced.canonicalFilename);
     syncedCsvs.push(synced);
+    rawCsvContents.push({ name: file.name, content });
   }
   if (csvFilenames.length === 0) {
     return NextResponse.json({ error: "No valid CSV files found (expected .csv)" }, { status: 400 });
+  }
+
+  // Ingest CSV rows into the Transaction ledger (idempotent — ON CONFLICT DO NOTHING).
+  // PDF must have been parsed first so Security/SecurityAlias rows are up to date.
+  const ingestSkipped: Array<{ file: string; rowNumber: number; tradeDate: string; security: string; csvType: string; reason: string }> = [];
+  for (const { name, content } of rawCsvContents) {
+    const ingestResult = await ingestFromCsv(prisma, content, name, liquidityPdf);
+    if (ingestResult.blockedNames.length > 0) {
+      return NextResponse.json(
+        {
+          error: `CSV contains ${ingestResult.blockedNames.length} BUY/SELL row(s) with security names not found in the Security master. Add SecurityAlias entries for these names before re-uploading.`,
+          unknownNames: ingestResult.blockedNames,
+        },
+        { status: 422 }
+      );
+    }
+    for (const s of ingestResult.skipped) ingestSkipped.push({ file: name, ...s });
   }
   const newFilenames = [...csvFilenames, ...pdfFilenames];
 
@@ -483,7 +506,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Preprocessing failed. Verify the uploaded CSV files are valid Directa exports." }, { status: 422 });
   }
 
+  // Inject full-ledger avgCost / costBasis into workbook holdings so that
+  // applyPdfListedPositions uses lifetime averages rather than just this month's CSV rows.
+  const ledgerHoldings = await computeLedgerHoldings(prisma, selectedCutoffDate);
+  injectLedgerCostBasis(workbook, ledgerHoldings);
+  // PDF overrides quantity + price + marketValue; ledger costBasis is picked up via byIsin.
   applyPdfListedPositions(workbook, liquidityPdf);
+
+  // Run reconciliation gate (qty exact-match per ISIN + MV delta ≤ ±€1).
+  const reconcileReport = reconcile(ledgerHoldings, liquidityPdf.positions);
+
   const brokerageCash = liquidityPdf.liquidity;
   const listedMarketValue = liquidityPdf.listedTotal;
   setWorkbookCashMetrics({
@@ -575,6 +607,13 @@ export async function POST(req: NextRequest) {
     previous: previousSnapshot,
     externalCash,
   });
+  if (!reconcileReport.passed) {
+    deterministicChecks.push({
+      severity: "blocker",
+      title: "Ledger reconciliation failed",
+      detail: reconcileReport.summary,
+    });
+  }
   const canPublish = !deterministicChecks.some((check) => check.severity === "blocker");
   const auditSummary = await buildAiReviewSummary({ uploaded: usedCsvs, payload, previous: previousSnapshot, externalCash, checks: deterministicChecks });
   const aiSummary = auditSummary.summary;
@@ -665,5 +704,15 @@ export async function POST(req: NextRequest) {
     holdingsCount: payload.holdings.length,
     warnings: payload.warnings,
     review: "Uploaded files created a draft snapshot only. Investor dashboards will update after an admin reviews and publishes this draft.",
+    ledgerReconcile: {
+      passed: reconcileReport.passed,
+      isinMatchCount: reconcileReport.isinMatchCount,
+      isinWarnCount: reconcileReport.isinWarnCount,
+      isinBlockerCount: reconcileReport.isinBlockerCount,
+      mvDeltaAdjusted: reconcileReport.mvDeltaAdjusted,
+      summary: reconcileReport.summary,
+      entries: reconcileReport.entries,
+    },
+    ledgerIngestSkipped: ingestSkipped,
   });
 }

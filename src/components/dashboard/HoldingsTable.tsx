@@ -75,7 +75,7 @@ export function HoldingsTable({ holdings }: { holdings: Holding[] }) {
         <table className="w-full min-w-[760px] text-sm">
           <thead className="sticky top-0 z-10">
             <tr className="border-b border-border/60" style={{ background: "hsl(222 35% 10%)" }}>
-              {["Security", "Type", "Market Value", "Weight", "ISIN"].map((h) => (
+              {["Security", "Type", "Avg Cost EUR", "Units", "Unrealized P&L", "Market Value", "Weight", "ISIN"].map((h) => (
                 <th
                   key={h}
                   className={`px-4 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest ${
@@ -105,6 +105,36 @@ export function HoldingsTable({ holdings }: { holdings: Holding[] }) {
                 </td>
 
                 <td className="px-4 py-3.5 text-right">
+                  {h.avgCost > 0 ? (
+                    <>
+                      <div className="font-numeric font-semibold text-foreground">{formatEur(h.avgCost)}</div>
+                      <div className="text-[11px] text-muted-foreground font-numeric mt-0.5">per unit</div>
+                    </>
+                  ) : (
+                    <span className="text-muted-foreground/50 text-xs">—</span>
+                  )}
+                </td>
+
+                <td className="px-4 py-3.5 text-right font-numeric text-foreground text-sm">
+                  {h.shares.toLocaleString("it-IT")}
+                </td>
+
+                <td className="px-4 py-3.5 text-right">
+                  {h.avgCost > 0 ? (
+                    <>
+                      <div className={`font-numeric font-semibold text-sm ${h.unrealizedPnl >= 0 ? "text-success" : "text-destructive"}`}>
+                        {h.unrealizedPnl >= 0 ? "+" : ""}{formatEur(h.unrealizedPnl)}
+                      </div>
+                      <div className={`text-[11px] font-numeric mt-0.5 ${h.pnlPct >= 0 ? "text-success/70" : "text-destructive/70"}`}>
+                        {h.pnlPct >= 0 ? "+" : ""}{(h.pnlPct * 100).toFixed(1)}%
+                      </div>
+                    </>
+                  ) : (
+                    <span className="text-muted-foreground/50 text-xs">—</span>
+                  )}
+                </td>
+
+                <td className="px-4 py-3.5 text-right">
                   <div className="font-numeric font-semibold text-foreground">{formatEur(h.marketValue)}</div>
                   <div className="flex justify-end mt-1">
                     <div className="w-16 h-1 rounded-full bg-secondary/50 overflow-hidden">
@@ -131,6 +161,9 @@ export function HoldingsTable({ holdings }: { holdings: Holding[] }) {
               <td className="px-4 py-3 text-xs font-semibold text-muted-foreground" colSpan={2}>
                 {selectedClass === "All" ? "All types" : selectedClass}
               </td>
+              <td />
+              <td />
+              <td />
               <td className="px-4 py-3 text-right font-numeric font-bold text-foreground">
                 {formatEur(filteredValue)}
               </td>

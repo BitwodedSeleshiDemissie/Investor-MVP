@@ -229,12 +229,6 @@ export function DirectaUpload() {
     try {
       if (!options.skipDuplicateCheck) {
         const duplicates = await checkDuplicates();
-        const exactDuplicates = duplicates.filter((item) => item.duplicateKind === "exact_file");
-        if (exactDuplicates.length > 0) {
-          setDuplicatePrompt({ mode: "block", files: exactDuplicates });
-          setStatus("idle");
-          return;
-        }
         if (duplicates.length > 0) {
           setDuplicatePrompt({ mode: "confirm", files: duplicates });
           setStatus("idle");
@@ -494,7 +488,7 @@ export function DirectaUpload() {
           >
             <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-border/60">
               <h3 className="text-sm font-bold text-foreground">
-                {duplicatePrompt.mode === "block" ? "File already uploaded" : "File name already exists"}
+                {duplicatePrompt.files.some((f) => f.duplicateKind === "exact_file") ? "File already uploaded" : "File name already exists"}
               </h3>
               <button
                 onClick={() => setDuplicatePrompt(null)}
@@ -506,19 +500,15 @@ export function DirectaUpload() {
             </div>
 
             <div className="px-5 py-4 space-y-3">
-              <div className={`rounded-xl border px-3 py-2.5 text-xs ${
-                duplicatePrompt.mode === "block"
-                  ? "border-destructive/30 bg-destructive/10 text-destructive"
-                  : "border-warning/30 bg-warning/10 text-warning"
-              }`}>
+              <div className="rounded-xl border border-warning/30 bg-warning/10 text-warning px-3 py-2.5 text-xs">
                 <p className="font-semibold">
-                  {duplicatePrompt.mode === "block"
-                    ? "This exact Directa file has already been imported."
-                    : "A Directa file with the same name was already imported."}
+                  {duplicatePrompt.files.some((f) => f.duplicateKind === "exact_file")
+                    ? "This file has already been imported."
+                    : "A file with the same name was already imported."}
                 </p>
                 <p className="mt-1 leading-relaxed opacity-90">
-                  {duplicatePrompt.mode === "block"
-                    ? "Remove the duplicate file before processing."
+                  {duplicatePrompt.files.some((f) => f.duplicateKind === "exact_file")
+                    ? "Transactions are already in the ledger — continuing is safe and will not insert duplicates. Use this to regenerate the snapshot with updated settings."
                     : "Continue only if this is a corrected export; the previous file with this name will be superseded."}
                 </p>
               </div>

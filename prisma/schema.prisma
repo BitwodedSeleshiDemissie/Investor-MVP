@@ -194,3 +194,60 @@ model disclaimer_acknowledgments {
   @@unique([email, version])
   @@index([email])
 }
+
+model Security {
+  isin            String          @id
+  name            String
+  currency        String
+  assetClass      AssetClass
+  priceConvention PriceConvention
+  aliases         SecurityAlias[]
+  transactions    Transaction[]
+}
+
+model SecurityAlias {
+  id       Int      @id @default(autoincrement())
+  rawName  String   @unique
+  isin     String
+  security Security @relation(fields: [isin], references: [isin])
+}
+
+model Transaction {
+  id           Int             @id @default(autoincrement())
+  externalRef  String          @unique
+  tradeDate    DateTime        @db.Date
+  type         TransactionType
+  securityIsin String?
+  security     Security?       @relation(fields: [securityIsin], references: [isin])
+  quantity     Decimal         @db.Decimal(20, 6)
+  price        Decimal         @db.Decimal(20, 8)
+  fxRate       Decimal         @db.Decimal(12, 8)
+  eurAmount    Decimal         @db.Decimal(20, 4)
+  commission   Decimal         @default(0) @db.Decimal(12, 4)
+  sourceFile   String?
+  notes        String?
+}
+
+enum TransactionType {
+  BUY
+  SELL
+  OPENING
+  DIVIDEND
+  INTEREST
+  COUPON
+  FEE
+  ETF_INCOME
+  LOAN_INT
+}
+
+enum AssetClass {
+  EQUITY
+  ETF
+  BOND
+  ETC
+}
+
+enum PriceConvention {
+  STRAIGHT
+  DECIMAL_FRACTION
+}
