@@ -105,7 +105,7 @@ export function HoldingsTable({ holdings }: { holdings: Holding[] }) {
                 </td>
 
                 <td className="px-4 py-3.5 text-right">
-                  {h.avgCost > 0 ? (
+                  {h.avgCost > 0 && h.assetClass !== "Bonds" ? (
                     <>
                       <div className="font-numeric font-semibold text-foreground">{formatEur(h.avgCost)}</div>
                       <div className="text-[11px] text-muted-foreground font-numeric mt-0.5">per unit</div>
