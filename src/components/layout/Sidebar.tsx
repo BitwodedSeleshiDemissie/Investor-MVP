@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard, TrendingUp, Building2, Wallet,
-  Settings, List, BarChart3, Menu, X,
+  Upload, Users, Menu, X, SlidersHorizontal, Eye, FileText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Role } from "@/lib/auth";
@@ -18,18 +18,21 @@ interface NavItem {
 }
 
 const investorNav: NavItem[] = [
-  { icon: LayoutDashboard, label: "Overview",    href: "/dashboard",            group: "Portfolio" },
-  { icon: TrendingUp,      label: "Listed",      href: "/dashboard/listed",     group: "Portfolio" },
-  { icon: Building2,       label: "Non-Listed",  href: "/dashboard/non-listed", group: "Portfolio" },
-  { icon: Wallet,          label: "Cash",        href: "/dashboard/cash",       group: "Portfolio" },
+  { icon: LayoutDashboard, label: "Overview",    href: "/dashboard",                group: "Portfolio" },
+  { icon: TrendingUp,      label: "Listed",      href: "/dashboard/listed",         group: "Portfolio" },
+  { icon: Building2,       label: "Non-Listed",  href: "/dashboard/non-listed",     group: "Portfolio" },
+  { icon: Wallet,          label: "Cash",        href: "/dashboard/cash",           group: "Portfolio" },
+  { icon: FileText,        label: "Disclaimer",  href: "/dashboard/disclaimer",     group: "Legal" },
 ];
 
 const adminNav: NavItem[] = [
   { icon: LayoutDashboard, label: "Dashboard",         href: "/admin",              group: "Management" },
-  { icon: List,            label: "Asset Dictionary",  href: "/admin/dictionary",   group: "Management" },
+  { icon: Upload,          label: "Upload Data",       href: "/admin/upload",       group: "Management" },
   { icon: Building2,       label: "Non-Listed Values", href: "/admin/non-listed",   group: "Data Entry" },
   { icon: Wallet,          label: "Cash & Liquidity",  href: "/admin/cash",         group: "Data Entry" },
-  { icon: Settings,        label: "Parameters",        href: "/admin/controls",     group: "Data Entry" },
+  { icon: Users,           label: "Investors",         href: "/admin/investors",    group: "Data Entry" },
+  { icon: Eye,             label: "See as user",       href: "/admin/see-as-user",  group: "Review" },
+  { icon: SlidersHorizontal, label: "Fund Settings",   href: "/admin/settings",     group: "Foundation" },
 ];
 
 function NavSection({ label, items, pathname, onNav }: {

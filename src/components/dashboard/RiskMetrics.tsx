@@ -1,21 +1,28 @@
 import type { RiskMetrics } from "@/types/portfolio";
 import { formatPctPlain } from "@/lib/utils";
 import { cn } from "@/lib/utils";
+import { TermTooltip } from "@/components/ui/TermTooltip";
+import { GLOSSARY } from "@/lib/glossary";
 
 function RiskTile({
   label,
   value,
   note,
   tone = "neutral",
+  tooltip,
 }: {
   label: string;
   value: string;
   note: string;
   tone?: "neutral" | "good" | "bad" | "info";
+  tooltip?: string;
 }) {
   return (
     <div className="rounded-xl border border-border/60 bg-secondary/20 p-4 hover:bg-secondary/30 transition-colors">
-      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-3">{label}</p>
+      <div className="flex items-center gap-1.5 mb-3">
+        <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest leading-none">{label}</p>
+        {tooltip && <TermTooltip definition={tooltip} />}
+      </div>
       <p className={cn(
         "font-numeric text-2xl font-bold leading-none mb-2",
         tone === "good"    && "text-success",
@@ -41,36 +48,42 @@ export function RiskMetricsBlock({ risk }: { risk: RiskMetrics }) {
         value={sharpe.toFixed(2)}
         note="Risk-adjusted return"
         tone={sharpeTone}
+        tooltip={GLOSSARY.sharpeRatio}
       />
       <RiskTile
         label="Ann. Volatility"
         value={formatPctPlain(risk.volatilityAnnualized)}
         note="Std dev × √12"
         tone="neutral"
+        tooltip={GLOSSARY.annVolatility}
       />
       <RiskTile
         label="Max Drawdown"
         value={formatPctPlain(risk.maxDrawdown)}
         note="Max loss from peak"
         tone={risk.maxDrawdown < -0.1 ? "bad" : "neutral"}
+        tooltip={GLOSSARY.maxDrawdown}
       />
       <RiskTile
         label="Ann. Return"
         value={formatPctPlain(risk.annualizedReturn)}
         note="Annualized TWR"
         tone={risk.annualizedReturn > 0 ? "good" : "bad"}
+        tooltip={GLOSSARY.annReturn}
       />
       <RiskTile
         label="Risk-Free Rate"
         value={formatPctPlain(risk.riskFreeRate)}
         note="Risk-free benchmark"
         tone="info"
+        tooltip={GLOSSARY.riskFreeRate}
       />
       <RiskTile
         label="Data Window"
         value={`${risk.dataWindowMonths} months`}
         note="Sample window"
         tone="neutral"
+        tooltip={GLOSSARY.dataWindow}
       />
     </div>
   );

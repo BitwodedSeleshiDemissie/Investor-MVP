@@ -1,34 +1,55 @@
 "use server";
 
 import { z } from "zod";
+import { headers } from "next/headers";
+import { AuthError } from "next-auth";
+import { signIn, signOut, findUser } from "@/auth";
 import { actionClient } from "@/lib/safe-action";
-import { checkPassword, setSessionCookie, clearSessionCookie, type Role } from "@/lib/auth";
-import { redirect } from "next/navigation";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
 });
 
-const demoUsers: Array<{ email: string; password: string; role: Role }> = [
-  { email: "admin@arietetest.com", password: "admintest", role: "admin" },
-  { email: "user@arietetest.com", password: "usertest", role: "investor" },
-];
+async function getClientIp(): Promise<string> {
+  const hdrs = await headers();
+  return (
+    hdrs.get("x-vercel-forwarded-for")?.split(",")[0].trim() ||
+    hdrs.get("x-real-ip")?.trim() ||
+    hdrs.get("x-forwarded-for")?.split(",")[0].trim() ||
+    "unknown"
+  );
+}
 
 export const loginAction = actionClient.schema(loginSchema).action(async ({ parsedInput }) => {
+  const ip = await getClientIp();
   const email = parsedInput.email.trim().toLowerCase();
-  const user = demoUsers.find((entry) => entry.email === email);
 
-  if (!user || !checkPassword(parsedInput.password, user.password)) {
-    return { error: "Credenziali non valide. Controlla email e password." };
+  if (!checkRateLimit(`login:${ip}:${email}`) || !checkRateLimit(`login-ip:${ip}`)) {
+    return { error: "Troppi tentativi. Riprova tra un minuto." };
   }
 
-  await setSessionCookie(user.role);
-  return { success: true, role: user.role };
+  try {
+    await signIn("credentials", {
+      email,
+      password: parsedInput.password,
+      redirect: false,
+    });
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return { error: "Credenziali non valide. Controlla email e password." };
+    }
+    throw error;
+  }
+
+  // Look up the role from the same credential source so the client can redirect
+  // without waiting for a second round-trip to read the new cookie.
+  const user = findUser(email);
+  return { success: true, role: user?.role ?? "investor" };
 });
 
 export async function logoutAction() {
   "use server";
-  await clearSessionCookie();
-  redirect("/login");
+  await signOut({ redirectTo: "/login" });
 }

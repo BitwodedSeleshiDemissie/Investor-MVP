@@ -1,7 +1,7 @@
 import { Building2, Hash, Tag, ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { getAdminData } from "@/server/queries/admin";
-import { dbEnabled } from "@/db/client";
+import { dbEnabled } from "@/db/prisma";
 import { DictionaryManager } from "@/components/admin/DictionaryManager";
 
 export default async function DictionaryPage() {
@@ -71,7 +71,7 @@ export default async function DictionaryPage() {
               <Building2 className="w-10 h-10 text-muted-foreground/20 mx-auto mb-3" />
               <p className="text-sm text-muted-foreground">Database not configured</p>
               <p className="text-xs text-muted-foreground/60 mt-1">
-                Add DATABASE_URL in .env.local to manage assets.
+                Add DATABASE_URL in .env to manage assets.
               </p>
             </div>
           ) : (

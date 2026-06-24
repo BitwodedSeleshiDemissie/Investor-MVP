@@ -1,8 +1,10 @@
 // Ports preprocess.py: statement CSV exports -> WorkbookData (in-memory, no Excel round-trip).
 // The resulting WorkbookData is fed directly into the existing calculations.ts functions.
 
-import type { WorkbookData, HoldingRow, CashFlowRow, MonthlyReturnRow } from "./excel-loader";
-import { query, dbEnabled } from "@/db/client";
+import type { WorkbookData, HoldingRow, CashFlowRow, MonthlyReturnRow, TradeRow } from "./workbook-data";
+import type { DistributionEvent, Holding, KPIs, NavPoint } from "@/types/portfolio";
+import { dbEnabled, getPrisma } from "@/db/prisma";
+import { resolveIsin } from "./isin";
 
 // ── Tipo ──────────────────────────────────────────────────────────────────────
 
@@ -122,7 +124,7 @@ function classifyByRules(name: string): Tipo | null {
 }
 
 async function classifyWithClaude(unknowns: string[]): Promise<Record<string, Tipo>> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.ENABLE_EXTERNAL_AI_CLASSIFIER === "true" ? process.env.ANTHROPIC_API_KEY : undefined;
   if (!apiKey || unknowns.length === 0) {
     return Object.fromEntries(unknowns.map((s) => [s, "Stock" as Tipo]));
   }
@@ -188,17 +190,17 @@ export async function buildTipoMap(securityNames: string[]): Promise<Record<stri
 
   if (dbEnabled()) {
     try {
-      const placeholders = needsDb.map((_, i) => `$${i + 1}`).join(",");
-      const cached = await query<{ security_name: string; tipo: string }>(
-        `SELECT security_name, tipo FROM security_tipo_cache WHERE security_name IN (${placeholders})`,
-        needsDb
-      );
+      const prisma = getPrisma();
+      const cached = await prisma.security_tipo_cache.findMany({
+        where: { security_name: { in: needsDb } },
+        select: { security_name: true, tipo: true },
+      });
       for (const { security_name, tipo } of cached) {
         result[security_name] = tipo as Tipo;
       }
       stillUnknown = needsDb.filter((n) => !result[n]);
     } catch {
-      // Table may not exist yet; will be created on first snapshot insert
+      // ignore — cache miss is fine
     }
   }
 
@@ -206,12 +208,13 @@ export async function buildTipoMap(securityNames: string[]): Promise<Record<stri
     const llm = await classifyWithClaude(stillUnknown);
     Object.assign(result, llm);
     if (dbEnabled()) {
+      const prisma = getPrisma();
       for (const [name, tipo] of Object.entries(llm)) {
-        await query(
-          `INSERT INTO security_tipo_cache (security_name, tipo) VALUES ($1, $2)
-           ON CONFLICT (security_name) DO NOTHING`,
-          [name, tipo]
-        ).catch(() => {});
+        await prisma.security_tipo_cache.upsert({
+          where: { security_name: name },
+          create: { security_name: name, tipo },
+          update: {},
+        }).catch(() => {});
       }
     }
   }
@@ -258,6 +261,36 @@ function parseItalianDate(value: string): Date | null {
   return null;
 }
 
+function statementMonthEndFromFilename(filename: string): Date | null {
+  const m1 = filename.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (m1) {
+    return new Date(parseInt(m1[1], 10), parseInt(m1[2], 10) - 1, parseInt(m1[3], 10));
+  }
+
+  const m2 = filename.match(/Ec(?:_?30|_?31)?_(\d{1,2})_(\d{4})/i);
+  if (m2) {
+    const month = parseInt(m2[1], 10);
+    const year = parseInt(m2[2], 10);
+    return new Date(year, month, 0);
+  }
+
+  return null;
+}
+
+function statementMonthEndFromHeader(lines: string[]): Date | null {
+  const periodLine = lines.find((line) => /Estratto\s+Conto/i.test(line) && /;["']?al["']?;/i.test(line));
+  if (!periodLine) return null;
+
+  const parts = splitSemicolon(periodLine).map((part) => part.trim().replace(/^"|"$/g, ""));
+  const alIndex = parts.findIndex((part) => part.toLowerCase() === "al");
+  const candidates = alIndex >= 0 ? parts.slice(alIndex + 1) : parts;
+  for (const candidate of candidates) {
+    const parsed = parseItalianDate(candidate);
+    if (parsed) return parsed;
+  }
+  return null;
+}
+
 // Ports get_transaction_type
 function getTransactionType(
   security: string,
@@ -272,7 +305,8 @@ function getTransactionType(
   if (ref.includes("interessi prest")) return "Sec. Lending";
   if (ref.includes("incasso dividendi")) return "Dividend";
   if (ref.includes("cedola")) return "Coupon";
-  if (ref.includes("provento etf") || ref.includes("rit.provento")) return "Distribution";
+  if (ref.includes("rit.provento")) return "Tax";
+  if (ref.includes("provento etf")) return "Distribution";
   if (ref.includes("rimborso obbl")) return "Redemption";
   if (ref.includes("bollo") || ref.includes("tobin") || ref.includes("rit.") || ref.includes("imposta")) return "Tax";
   if (qty !== null && qty > 0 && amount !== null && amount < 0) return "Buy";
@@ -283,10 +317,12 @@ function getTransactionType(
 
 export interface RawRow {
   sourceFile: string;
+  rowNumber?: number;
   fileDate: Date | null;
   date: Date;
   settlement: Date | null;
   security: string;
+  isin?: string;
   reference: string;
   price: number | null;
   currency: string;
@@ -299,30 +335,20 @@ export interface RawRow {
 
 export interface PositionPriceRow {
   sourceFile: string;
+  fileDate: Date | null;
   security: string;
+  isin?: string;
   quantity: number;
   price: number;
   marketValue: number;
 }
 
+type PositionMap = Map<string, PositionPriceRow>;
+
 // Ports read_csv_files (single file variant)
 export function parseCsvFile(content: string, filename: string): RawRow[] {
-  // Detect file date from filename: "Estratto Conto YYYY-MM-DD.csv" or "Ec30_MM_YYYY.csv"
-  let fileDate: Date | null = null;
-  const m1 = filename.match(/(\d{4})-(\d{2})-(\d{2})/);
-  if (m1) {
-    fileDate = new Date(parseInt(m1[1]), parseInt(m1[2]) - 1, parseInt(m1[3]));
-  } else {
-    const m2 = filename.match(/Ec30_(\d{1,2})_(\d{4})/i);
-    if (m2) {
-      const month = parseInt(m2[1]);
-      const year = parseInt(m2[2]);
-      // Use last day of that month
-      fileDate = new Date(year, month, 0);
-    }
-  }
-
   const lines = content.split(/\r?\n/);
+  const fileDate = statementMonthEndFromFilename(filename) ?? statementMonthEndFromHeader(lines);
   // Skip 4-line preamble (company info, period, blank, headers); data starts at index 4.
   const rows: RawRow[] = [];
   for (let i = 4; i < lines.length; i++) {
@@ -344,10 +370,12 @@ export function parseCsvFile(content: string, filename: string): RawRow[] {
 
     rows.push({
       sourceFile: filename,
+      rowNumber: rows.length + 1,
       fileDate,
       date: d,
       settlement: parseItalianDate(parts[1]),
       security,
+      isin: resolveIsin(security, reference),
       reference,
       price,
       currency,
@@ -364,13 +392,32 @@ export function parseCsvFile(content: string, filename: string): RawRow[] {
 // ── Financial calculations ─────────────────────────────────────────────────────
 
 export function parsePositionCsvFile(content: string, filename: string): PositionPriceRow[] {
-  const rows: PositionPriceRow[] = [];
+  const finalRows = new Map<string, PositionPriceRow>();
+  const totalRows = new Map<string, PositionPriceRow>();
+  let fileDate: Date | null = null;
+
+  const m1 = filename.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (m1) {
+    fileDate = new Date(parseInt(m1[1]), parseInt(m1[2]) - 1, parseInt(m1[3]));
+  } else {
+    const m2 = filename.match(/Ec(?:_X|30)?_(\d{1,2})_(\d{4})/i);
+    if (m2) {
+      fileDate = new Date(parseInt(m2[2]), parseInt(m2[1]), 0);
+    }
+  }
+
   for (const line of content.split(/\r?\n/)) {
     if (!line.trim()) continue;
     const parts = splitSemicolon(line);
+    if (!fileDate) {
+      const headerDate = parseItalianDate(parts[1] ?? "");
+      if (headerDate) fileDate = headerDate;
+    }
     const security = parts[1]?.trim().replace(/^"|"$/g, "") ?? "";
+    const isin = resolveIsin(parts[0]?.trim().replace(/^"|"$/g, ""), security, parts[2]?.trim().replace(/^"|"$/g, ""));
     const marker = parts[5]?.trim().replace(/^"|"$/g, "") ?? "";
-    if (!security || marker.toLowerCase() !== "saldo finale") continue;
+    const markerLower = marker.toLowerCase();
+    if (!security || (markerLower !== "saldo finale" && markerLower !== "totale")) continue;
 
     const quantity = parseItalianNumber(parts[7] ?? "") ?? 0;
     const parsedPrice = parseItalianNumber(parts[8] ?? "");
@@ -378,15 +425,42 @@ export function parsePositionCsvFile(content: string, filename: string): Positio
     const price = parsedPrice ?? (quantity !== 0 ? marketValue / quantity : 0);
     if (quantity === 0 && price === 0 && marketValue === 0) continue;
 
-    rows.push({
+    const row = {
       sourceFile: filename,
+      fileDate,
       security,
+      isin,
       quantity,
       price,
       marketValue,
+    };
+
+    if (markerLower === "totale") {
+      totalRows.set(security, row);
+      continue;
+    }
+
+    const current = finalRows.get(security);
+    if (!current) {
+      finalRows.set(security, row);
+      continue;
+    }
+
+    const quantityTotal = current.quantity + row.quantity;
+    const marketValueTotal = current.marketValue + row.marketValue;
+    finalRows.set(security, {
+      sourceFile: filename,
+      fileDate,
+      security,
+      isin: current.isin || row.isin,
+      quantity: quantityTotal,
+      price: quantityTotal !== 0 && marketValueTotal > 0 ? marketValueTotal / quantityTotal : row.price || current.price,
+      marketValue: marketValueTotal,
     });
   }
-  return rows;
+
+  const securities = new Set([...finalRows.keys(), ...totalRows.keys()]);
+  return [...securities].map((security) => totalRows.get(security) ?? finalRows.get(security)!);
 }
 
 function val(v: number | null | undefined): number {
@@ -405,8 +479,54 @@ export function formatDateOnly(date: Date): string {
   ].join("-");
 }
 
+function parseDateOnly(value: string): Date {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function tipoFromAssetClass(assetClass: string): Tipo {
+  const normalized = assetClass.toLowerCase();
+  if (normalized.includes("bond")) return "Bond";
+  if (normalized.includes("crypto")) return "Crypto ETP";
+  if (normalized.includes("etf") || normalized.includes("etc")) return "ETF/ETC";
+  if (normalized.includes("cash")) return "Cash";
+  if (normalized.includes("stock") || normalized.includes("equity")) return "Stock";
+  return "Other";
+}
+
+
+function monthlyRowsFromPreviousSnapshot(snapshot: PreviousSnapshotInput | undefined): MonthlyReturnRow[] {
+  if (!snapshot) return [];
+  return snapshot.timeseries.map((point) => ({
+    monthEnd: parseDateOnly(point.monthEnd),
+    nav: point.nav,
+    monthlyReturn: point.monthlyReturn,
+    cumulativeReturn: point.cumulativeReturn,
+  }));
+}
+
+function isNewerPosition(candidate: PositionPriceRow, current: PositionPriceRow | undefined): boolean {
+  if (!current) return true;
+  if (!candidate.fileDate || !current.fileDate) return !current.fileDate && !!candidate.fileDate;
+  return candidate.fileDate >= current.fileDate;
+}
+
+function normalizedPositionPrice(position: PositionPriceRow, shares: number): number {
+  if (position.marketValue > 0 && Math.abs(shares) > 0) {
+    return position.marketValue / Math.abs(shares);
+  }
+  return position.price;
+}
+
+function normalizedFallbackPrice(price: number, avgCost: number, tipo: Tipo | null): number {
+  if (tipo === "Bond" && price > 10 && avgCost > 0 && price > avgCost * 10) {
+    return price / 100;
+  }
+  return price;
+}
+
 // Ports compute_holdings
-function computeHoldingsFromRows(tradeRows: RawRow[], priceMap: Map<string, number>): HoldingRow[] {
+function computeHoldingsFromRows(tradeRows: RawRow[], positions: PositionMap): HoldingRow[] {
   const groups = new Map<string, RawRow[]>();
   for (const r of tradeRows) {
     if (!["Buy", "Sell", "Redemption"].includes(r.type) || !r.security) continue;
@@ -430,18 +550,19 @@ function computeHoldingsFromRows(tradeRows: RawRow[], priceMap: Map<string, numb
     const shares = hasRedemption ? 0 : Math.round((buyQty + sellQty) * 1e8) / 1e8;
     const avgCost = buyQty > 0 ? buyCost / buyQty : 0;
 
-    // Current price: positions CSV first, then last traded price in history.
+    // Current valuation: trust Directa's official position market value when
+    // available. Bond quoted prices can appear as percent prices or unit prices,
+    // so reconstructing MV from price alone can create false ~90% losses.
     const lastRow = [...secRows].reverse().find((r) => r.price !== null);
-    const currentPrice = priceMap.get(security) ?? lastRow?.price ?? 0;
-
-    // Bond price adjustment (quoted per 100 face value, holdings in face units)
+    const position = positions.get(security);
     const tipo = secRows[secRows.length - 1].tipo;
-    let adjPrice = currentPrice;
-    if (tipo === "Bond" && currentPrice > 10 && Math.abs(shares) > 1000) {
-      adjPrice = currentPrice / 100;
-    }
+    const isin = position?.isin || secRows.find((r) => r.isin)?.isin || resolveIsin(security);
+    const fallbackPrice = normalizedFallbackPrice(lastRow?.price ?? 0, avgCost, tipo);
+    const currentPrice = position ? normalizedPositionPrice(position, shares) : fallbackPrice;
 
-    const marketValue = shares * adjPrice;
+    const marketValue = position?.marketValue && shares > 0
+      ? position.marketValue
+      : shares * currentPrice;
     const costBasis = shares !== 0 ? shares * avgCost : 0;
     const unrealizedPnl = shares !== 0 ? marketValue - costBasis : 0;
     const pnlPct = costBasis > 0 ? unrealizedPnl / costBasis : 0;
@@ -450,12 +571,13 @@ function computeHoldingsFromRows(tradeRows: RawRow[], priceMap: Map<string, numb
 
     holdings.push({
       security,
+      isin,
       assetClass: tipo ?? "Stock",
       currency: secRows[secRows.length - 1].currency || "EUR",
       shares,
       avgCost: Math.round(avgCost * 1e6) / 1e6,
       costBasis: Math.round(costBasis * 1e6) / 1e6,
-      currentPrice: Math.round(adjPrice * 1e6) / 1e6,
+      currentPrice: Math.round(currentPrice * 1e6) / 1e6,
       marketValue: Math.round(marketValue * 1e6) / 1e6,
       unrealizedPnl: Math.round(unrealizedPnl * 1e6) / 1e6,
       pnlPct: Math.round(pnlPct * 1e8) / 1e8,
@@ -490,7 +612,8 @@ export function getCashAtCutoff(rows: RawRow[], cutoff: Date): number {
 function computeMonthlyReturnsFromRows(
   rows: RawRow[],
   cutoff: Date,
-  positionPrices: Map<string, number>
+  positions: PositionMap,
+  previousNav: number | null = null
 ): MonthlyReturnRow[] {
   // Collect unique month-end dates from Balance rows, keyed by ISO date string to avoid duplicates.
   const meMap = new Map<string, Date>();
@@ -503,14 +626,14 @@ function computeMonthlyReturnsFromRows(
   const monthEnds = [...meMap.values()].sort((a, b) => a.getTime() - b.getTime());
 
   const result: MonthlyReturnRow[] = [];
-  let prevValue: number | null = null;
+  let prevValue: number | null = previousNav;
   let cumulative = 0;
 
   for (const me of monthEnds) {
     const meKey = `${me.getFullYear()}-${me.getMonth()}-${me.getDate()}`;
     const isCurrentMonth =
       me.getFullYear() === cutoff.getFullYear() && me.getMonth() === cutoff.getMonth();
-    const value = getAccountValueAtCutoff(rows, me, isCurrentMonth ? positionPrices : undefined);
+    const value = getAccountValueAtCutoff(rows, me, isCurrentMonth ? positions : undefined);
 
     const rowMonthKey = (r: RawRow) => {
       const m = monthEnd(r.date);
@@ -544,14 +667,14 @@ function computeMonthlyReturnsFromRows(
 function getAccountValueAtCutoff(
   rows: RawRow[],
   cutoff: Date,
-  positionPrices?: Map<string, number>
+  positions?: PositionMap
 ): number {
   const cash = getCashAtCutoff(rows, cutoff);
-  const bySecurity = new Map<string, { shares: number; price: number; tipo: Tipo | null }>();
+  const bySecurity = new Map<string, { shares: number; price: number; tipo: Tipo | null; buyQty: number; buyCost: number }>();
 
   for (const r of rows) {
     if (r.date > cutoff || !r.security || !["Buy", "Sell", "Redemption"].includes(r.type)) continue;
-    const current = bySecurity.get(r.security) ?? { shares: 0, price: 0, tipo: null };
+    const current = bySecurity.get(r.security) ?? { shares: 0, price: 0, tipo: null, buyQty: 0, buyCost: 0 };
     current.tipo = r.tipo ?? current.tipo;
     const rowPrice = val(r.price);
     if (rowPrice > 0) current.price = rowPrice;
@@ -561,6 +684,10 @@ function getAccountValueAtCutoff(
       bySecurity.set(r.security, current);
       continue;
     }
+    if (r.type === "Buy") {
+      current.buyQty += val(r.quantity);
+      current.buyCost += -val(r.amount);
+    }
     current.shares += val(r.quantity);
     bySecurity.set(r.security, current);
   }
@@ -568,10 +695,13 @@ function getAccountValueAtCutoff(
   let holdingsValue = 0;
   for (const [security, position] of bySecurity) {
     if (position.shares <= 0) continue;
-    let price = positionPrices?.get(security) ?? position.price;
-    if (position.tipo === "Bond" && price > 10 && Math.abs(position.shares) > 1000) {
-      price = price / 100;
+    const officialPosition = positions?.get(security);
+    if (officialPosition?.marketValue && officialPosition.marketValue > 0) {
+      holdingsValue += officialPosition.marketValue;
+      continue;
     }
+    const avgCost = position.buyQty > 0 ? position.buyCost / position.buyQty : 0;
+    const price = normalizedFallbackPrice(position.price, avgCost, position.tipo);
     holdingsValue += position.shares * price;
   }
 
@@ -642,19 +772,61 @@ export interface AdminOverlays {
   nonListedValue: number;
   externalCash: number;
   capitalCommitted: number;
+  previousSnapshot?: PreviousSnapshotInput | null;
 }
 
-export async function buildWorkbookData(
-  csvFiles: { name: string; content: string }[],
+export interface PreviousSnapshotInput {
+  cutoffDate: string;
+  totalPortfolioValue: number;
+  holdings: Holding[];
+  timeseries: NavPoint[];
+  kpis?: Pick<KPIs, "totalIncome" | "distributionsTotal"> | null;
+  distributions?: DistributionEvent[] | null;
+}
+
+function previousIncomeTotal(snapshot: PreviousSnapshotInput | undefined): number {
+  if (!snapshot) return 0;
+  const metric = Number(snapshot.kpis?.totalIncome ?? snapshot.kpis?.distributionsTotal);
+  if (Number.isFinite(metric) && metric > 0) return metric;
+  return (snapshot.distributions ?? []).reduce((sum, distribution) => {
+    const amount = Number(distribution.amount);
+    return Number.isFinite(amount) && amount > 0 ? sum + amount : sum;
+  }, 0);
+}
+
+function previousDistributionTradeRows(snapshot: PreviousSnapshotInput | undefined): TradeRow[] {
+  if (!snapshot?.distributions?.length) return [];
+  return snapshot.distributions.flatMap((distribution): TradeRow[] => {
+    const amount = Number(distribution.amount);
+    const date = parseDateOnly(distribution.date);
+    if (!Number.isFinite(amount) || amount <= 0 || !Number.isFinite(date.getTime())) return [];
+    return [{
+      date,
+      security: distribution.security,
+      assetClass: "Income",
+      currency: "EUR",
+      type: distribution.incomeType || "Income",
+      shares: 0,
+      price: 0,
+      netAmount: amount,
+    }];
+  });
+}
+
+export async function buildWorkbookDataFromParsedRows(
+  parsedRows: RawRow[],
+  parsedPositions: PositionPriceRow[],
   overlays: AdminOverlays
 ): Promise<WorkbookData> {
-  // Step 1: parse all CSV files
-  const allRows: RawRow[] = [];
-  const positionPrices = new Map<string, number>();
-  for (const f of csvFiles) {
-    allRows.push(...parseCsvFile(f.content, f.name));
-    for (const row of parsePositionCsvFile(f.content, f.name)) {
-      if (row.price > 0) positionPrices.set(row.security, row.price);
+  // Step 1: persisted Directa rows for this month only.
+  // Cost-basis history comes from the Transaction ledger via injectLedgerCostBasis()
+  // called before applyPdfListedPositions() in the upload route.
+  const allRows: RawRow[] = [...parsedRows];
+  const positions: PositionMap = new Map();
+  for (const row of parsedPositions) {
+    if (row.price > 0 || row.marketValue > 0) {
+      const current = positions.get(row.security);
+      if (isNewerPosition(row, current)) positions.set(row.security, row);
     }
   }
   allRows.sort((a, b) => a.date.getTime() - b.date.getTime());
@@ -673,7 +845,7 @@ export async function buildWorkbookData(
   const tradeRows = allRows.filter((r) => r.date <= cutoff);
 
   // Step 4: compute holdings
-  const holdings = computeHoldingsFromRows(tradeRows, positionPrices);
+  const holdings = computeHoldingsFromRows(tradeRows, positions);
   const listedMarketValue = holdings.reduce((s, h) => s + h.marketValue, 0);
 
   // Step 5: cash
@@ -689,7 +861,8 @@ export async function buildWorkbookData(
   const coupons = tradeRows.filter((r) => r.type === "Coupon").reduce((s, r) => s + val(r.amount) + val(r.commission), 0);
   const distributions = tradeRows.filter((r) => r.type === "Distribution").reduce((s, r) => s + val(r.amount) + val(r.commission), 0);
   const lending = tradeRows.filter((r) => r.type === "Sec. Lending").reduce((s, r) => s + val(r.amount) + val(r.commission), 0);
-  const totalIncome = dividends + coupons + distributions + lending;
+  const incrementalIncome = dividends + coupons + distributions + lending;
+  const totalIncome = previousIncomeTotal(overlays.previousSnapshot ?? undefined) + incrementalIncome;
 
   const invested = tradeRows.filter((r) => r.type === "Deposit").reduce((s, r) => s + val(r.amount), 0);
   const withdrawals = Math.abs(tradeRows.filter((r) => r.type === "Withdrawal").reduce((s, r) => s + val(r.amount), 0));
@@ -698,7 +871,20 @@ export async function buildWorkbookData(
   const netPnl = portfolioValue + withdrawals - invested;
 
   // Step 8: monthly returns
-  const monthlyReturns = computeMonthlyReturnsFromRows(allRows, cutoff, positionPrices);
+  const incrementalMonthlyReturns = computeMonthlyReturnsFromRows(
+    allRows,
+    cutoff,
+    positions,
+    overlays.previousSnapshot?.totalPortfolioValue ?? null
+  );
+  const previousMonthlyReturns = monthlyRowsFromPreviousSnapshot(overlays.previousSnapshot ?? undefined);
+  const firstIncrementalMonth = incrementalMonthlyReturns[0]?.monthEnd ?? null;
+  const monthlyReturns = [
+    ...previousMonthlyReturns.filter(
+      (row) => !firstIncrementalMonth || row.monthEnd < firstIncrementalMonth
+    ),
+    ...incrementalMonthlyReturns,
+  ];
 
   // Step 9: annualized return for portfolioMetrics fallback
   const rets = monthlyReturns.map((r) => r.monthlyReturn);
@@ -710,7 +896,7 @@ export async function buildWorkbookData(
   const irrPortfolio = buildPortfolioIrrFlows(tradeRows);
 
   // Step 11: Trade log for computeDistributions / computeKPIs
-  const tradeLog = tradeRows
+  const currentTradeLog = tradeRows
     .filter((r) => r.type !== "Balance")
     .map((r) => ({
       date: r.date,
@@ -729,6 +915,10 @@ export async function buildWorkbookData(
         return a + c;
       })(),
     }));
+  const tradeLog = [
+    ...previousDistributionTradeRows(overlays.previousSnapshot ?? undefined),
+    ...currentTradeLog,
+  ].sort((a, b) => a.date.getTime() - b.date.getTime());
 
   // portfolioMetrics: populate all keys that calculations.ts looks up
   const portfolioMetrics: Record<string, number | string> = {
@@ -747,5 +937,19 @@ export async function buildWorkbookData(
     "Total Market Value (Holdings)": listedMarketValue,
   };
 
-  return { tradeLog, holdings, portfolioMetrics, irrInvestor, irrPortfolio, monthlyReturns, cutoffDate: cutoff };
+  return { tradeLog, holdings, portfolioMetrics, irrInvestor, irrPortfolio, monthlyReturns, cutoffDate: cutoff, investorPerformance: [] };
+}
+
+export async function buildWorkbookData(
+  csvFiles: { name: string; content: string }[],
+  overlays: AdminOverlays
+): Promise<WorkbookData> {
+  const parsedRows: RawRow[] = [];
+  const parsedPositions: PositionPriceRow[] = [];
+  for (const f of csvFiles) {
+    parsedRows.push(...parseCsvFile(f.content, f.name));
+    parsedPositions.push(...parsePositionCsvFile(f.content, f.name));
+  }
+
+  return buildWorkbookDataFromParsedRows(parsedRows, parsedPositions, overlays);
 }

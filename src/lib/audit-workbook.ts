@@ -1,5 +1,12 @@
 import * as XLSX from "xlsx";
-import type { WorkbookData } from "./excel-loader";
+import type { WorkbookData } from "./workbook-data";
+
+// Prefix formula-trigger characters so Excel/Sheets cannot execute injected formulas (F-16)
+function escapeCell(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  if (/^[=+\-@\t\r]/.test(value)) return `'${value}`;
+  return value;
+}
 
 function dateCell(value: Date): Date {
   return new Date(value.getFullYear(), value.getMonth(), value.getDate());
@@ -16,10 +23,20 @@ function setColumnWidths(sheet: XLSX.WorkSheet, widths: number[]): void {
 export function buildAuditWorkbookBuffer(workbook: WorkbookData): Buffer {
   const audit = XLSX.utils.book_new();
 
-  const metricEntries = Object.entries(workbook.portfolioMetrics).map(([key, value]) => [
-    key === "Directa Cash" ? "Statement Cash" : key,
-    value,
-  ]);
+  function displayMetricName(key: string): string {
+    if (key === "Statement Cash" || key === "Directa Cash") return "Brokerage Account Cash";
+    if (key === "External Cash") return "Cash Outside Brokerage";
+    return key;
+  }
+
+  const seenMetrics = new Set<string>();
+  const metricEntries = Object.entries(workbook.portfolioMetrics)
+    .map(([key, value]) => [displayMetricName(key), value] as const)
+    .filter(([key]) => {
+      if (seenMetrics.has(key)) return false;
+      seenMetrics.add(key);
+      return true;
+    });
   const metricRows: unknown[][] = [["Metric", "Value", "", "Metric", "Value"]];
   const midpoint = Math.ceil(metricEntries.length / 2);
   for (let i = 0; i < midpoint; i++) {
@@ -56,9 +73,9 @@ export function buildAuditWorkbookBuffer(workbook: WorkbookData): Buffer {
       "Weight",
     ],
     ...workbook.holdings.map((h) => [
-      h.security,
-      h.assetClass,
-      h.currency,
+      escapeCell(h.security),
+      escapeCell(h.assetClass),
+      escapeCell(h.currency),
       h.shares,
       h.avgCost,
       h.costBasis,
@@ -92,10 +109,10 @@ export function buildAuditWorkbookBuffer(workbook: WorkbookData): Buffer {
     ...workbook.tradeLog.map((t) => [
       dateCell(t.date),
       "",
-      t.security,
-      t.assetClass,
-      t.currency,
-      t.type,
+      escapeCell(t.security),
+      escapeCell(t.assetClass),
+      escapeCell(t.currency),
+      escapeCell(t.type),
       t.shares,
       t.price,
       t.netAmount,

@@ -37,10 +37,10 @@ export function TargetVsActualChart({ targets }: { targets: TargetVsActual }) {
   );
 
   const data = [
-    { name: "Equities",    Target: +(targets.targetEquityPct * 100).toFixed(1), Actual: +(targets.currentEquityPct * 100).toFixed(1) },
-    { name: "Bonds",       Target: +(targets.targetBondPct * 100).toFixed(1),   Actual: +(targets.currentBondPct * 100).toFixed(1) },
-    { name: "Alternatives", Target: +(targets.targetAltPct * 100).toFixed(1),   Actual: +(targets.currentAltPct * 100).toFixed(1) },
-    { name: "Cash",        Target: cash_target,                                  Actual: +(targets.currentCashPct * 100).toFixed(1) },
+    { name: "Equities",    Target: +(targets.targetEquityPct * 100).toFixed(1), Current: +(targets.currentEquityPct * 100).toFixed(1) },
+    { name: "Bonds",       Target: +(targets.targetBondPct * 100).toFixed(1),   Current: +(targets.currentBondPct * 100).toFixed(1) },
+    { name: "Alternatives", Target: +(targets.targetAltPct * 100).toFixed(1),   Current: +(targets.currentAltPct * 100).toFixed(1) },
+    { name: "Cash",        Target: cash_target,                                  Current: +(targets.currentCashPct * 100).toFixed(1) },
   ];
 
   if (!mounted) {
@@ -61,14 +61,14 @@ export function TargetVsActualChart({ targets }: { targets: TargetVsActual }) {
           tick={{ fill: "hsl(215 18% 45%)", fontSize: 11, fontFamily: "Plus Jakarta Sans" }}
           tickLine={false} axisLine={false} width={36}
         />
-        <Tooltip content={<CustomTooltip />} />
+        <Tooltip content={<CustomTooltip />} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
         <Legend
           wrapperStyle={{ fontSize: 12, color: "hsl(215 18% 45%)", fontFamily: "Plus Jakarta Sans" }}
           iconType="square"
           iconSize={8}
         />
-        <Bar dataKey="Target" fill="hsl(222 35% 22%)" radius={[4, 4, 0, 0]} maxBarSize={32} />
-        <Bar dataKey="Actual" fill="hsl(26 90% 54%)"  radius={[4, 4, 0, 0]} maxBarSize={32} />
+        <Bar dataKey="Target"  fill="hsl(222 35% 22%)" radius={[4, 4, 0, 0]} maxBarSize={32} />
+        <Bar dataKey="Current" fill="hsl(26 90% 54%)"  radius={[4, 4, 0, 0]} maxBarSize={32} />
       </BarChart>
     </ResponsiveContainer>
   );

@@ -1,30 +1,29 @@
-import { Building2, TrendingUp, Calendar, ArrowLeft } from "lucide-react";
+import { Building2, HandCoins, ArrowLeft, Calendar } from "lucide-react";
 import Link from "next/link";
-import { getAdminData } from "@/server/queries/admin";
-import { dbEnabled } from "@/db/client";
-import { ManualValuesForm } from "@/components/admin/ManualValuesForm";
+import { getFixedPortfolioValues, getNonListedTransactions, getPrivateLoanTransactions } from "@/server/queries/admin";
+import { dbEnabled } from "@/db/prisma";
+import { NonListedValuesForm } from "@/components/admin/NonListedValuesForm";
+import { PrivateLoanPrincipalForm } from "@/components/admin/PrivateLoanPrincipalForm";
+import { DeleteEntryButton } from "@/components/admin/DeleteEntryButton";
 import { formatEur, formatDate } from "@/lib/utils";
 
 export default async function AdminNonListedPage() {
-  const { dictionary, manualValues } = await getAdminData();
-  const nlValues = manualValues.filter((v) => v.itemType === "non_listed");
-
-  // Latest per asset
-  const latestByKey = new Map<string, typeof nlValues[number]>();
-  for (const v of nlValues) {
-    const existing = latestByKey.get(v.itemKey);
-    if (!existing || v.valueDate > existing.valueDate) latestByKey.set(v.itemKey, v);
-  }
-  const latestRows = [...latestByKey.values()].sort((a, b) => b.value - a.value);
-  const totalLatest = latestRows.reduce((s, r) => s + r.value, 0);
+  const [values, transactions, loanTransactions] = await Promise.all([
+    getFixedPortfolioValues(),
+    getNonListedTransactions(),
+    getPrivateLoanTransactions(),
+  ]);
+  const { privateParticipations, privateLoanPrincipal, history } = values;
+  const totalNonListed = privateParticipations + privateLoanPrincipal;
+  const nlHistory = history.filter((h) => h.privateParticipations > 0 || h.privateLoanPrincipal > 0);
 
   return (
     <div className="space-y-6 pb-10 animate-fade-in">
       <div className="pt-1 flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-xl font-bold text-foreground tracking-tight">Non-Listed Values</h1>
+          <h1 className="text-xl font-bold text-foreground tracking-tight">Non-Listed Assets</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Enter monthly valuations for non-listed assets
+            Enter approved participation and private loan rows for the next snapshot
           </p>
         </div>
         <Link
@@ -36,56 +35,45 @@ export default async function AdminNonListedPage() {
         </Link>
       </div>
 
-      {/* Hero total */}
-      {latestRows.length > 0 && (
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div
-          className="rounded-2xl border border-border/60 p-6 flex items-end justify-between gap-4"
+          className="rounded-2xl border border-border/60 p-5"
           style={{ background: "hsl(var(--card))", boxShadow: "var(--shadow-card)" }}
         >
-          <div>
-            <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-widest mb-3">
-              Total Non-Listed (latest values)
-            </p>
-            <p className="font-numeric text-5xl font-bold text-foreground leading-none">{formatEur(totalLatest)}</p>
-            <p className="text-xs text-muted-foreground mt-2">
-              {latestRows.length} assets · {nlValues.length} total entries
-            </p>
+          <div className="flex items-center gap-2 mb-3">
+            <Building2 className="w-4 h-4 text-purple-400" />
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Private Participations</p>
           </div>
-          <div className="p-4 rounded-xl bg-purple-500/10 border border-purple-500/20">
-            <Building2 className="w-7 h-7 text-purple-400" />
-          </div>
+          <p className="font-numeric text-3xl font-bold text-foreground leading-none">
+            {privateParticipations > 0 ? formatEur(privateParticipations) : "-"}
+          </p>
         </div>
-      )}
+
+        <div
+          className="rounded-2xl border border-border/60 p-5"
+          style={{ background: "hsl(var(--card))", boxShadow: "var(--shadow-card)" }}
+        >
+          <div className="flex items-center gap-2 mb-3">
+            <HandCoins className="w-4 h-4 text-blue-400" />
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Private Loan Principal</p>
+          </div>
+          <p className="font-numeric text-3xl font-bold text-foreground leading-none">
+            {privateLoanPrincipal > 0 ? formatEur(privateLoanPrincipal) : "-"}
+          </p>
+        </div>
+
+        <div
+          className="rounded-2xl border border-primary/20 p-5"
+          style={{ background: "hsl(26 90% 54% / 0.07)", boxShadow: "var(--shadow-gold)" }}
+        >
+          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-3">Total Non-Listed</p>
+          <p className="font-numeric text-3xl font-bold text-gradient-gold leading-none">
+            {totalNonListed > 0 ? formatEur(totalNonListed) : "-"}
+          </p>
+        </div>
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Insert form */}
-        <div
-          className="rounded-2xl border border-border/60 overflow-hidden"
-          style={{ background: "hsl(var(--card))", boxShadow: "var(--shadow-card)" }}
-        >
-          <div
-            className="flex items-center gap-2.5 px-5 py-4 border-b border-border/60"
-            style={{ background: "hsl(222 44% 7%)" }}
-          >
-            <div className="p-1.5 rounded-lg bg-purple-500/10">
-              <TrendingUp className="w-3.5 h-3.5 text-purple-400" />
-            </div>
-            <h2 className="text-sm font-semibold text-foreground">New Valuation</h2>
-          </div>
-          <div className="p-5">
-            {!dbEnabled() ? (
-              <div className="py-8 text-center">
-                <Building2 className="w-10 h-10 text-muted-foreground/20 mx-auto mb-3" />
-                <p className="text-sm text-muted-foreground">Database not configured</p>
-                <p className="text-xs text-muted-foreground/60 mt-1">Add DATABASE_URL in .env.local.</p>
-              </div>
-            ) : (
-              <ManualValuesForm items={dictionary} />
-            )}
-          </div>
-        </div>
-
-        {/* Latest values per asset */}
         <div
           className="rounded-2xl border border-border/60 overflow-hidden"
           style={{ background: "hsl(var(--card))", boxShadow: "var(--shadow-card)" }}
@@ -97,44 +85,21 @@ export default async function AdminNonListedPage() {
             <div className="p-1.5 rounded-lg bg-purple-500/10">
               <Building2 className="w-3.5 h-3.5 text-purple-400" />
             </div>
-            <h2 className="text-sm font-semibold text-foreground">Latest Values per Asset</h2>
-            <span className="ml-auto text-[11px] text-muted-foreground">{latestRows.length} assets</span>
+            <h2 className="text-sm font-semibold text-foreground">Enter Participation Row</h2>
           </div>
-          {latestRows.length > 0 ? (
-            <div className="divide-y divide-border/40">
-              {latestRows.map((r) => (
-                <div
-                  key={r.itemKey}
-                  className="flex items-center justify-between px-5 py-4 hover:bg-secondary/20 transition-colors"
-                >
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-foreground truncate">
-                      {r.holdingName ?? r.displayName}
-                    </p>
-                    <p className="text-[11px] text-muted-foreground font-mono mt-0.5">{r.itemKey}</p>
-                  </div>
-                  <div className="text-right shrink-0 ml-4">
-                    <p className="font-numeric text-base font-bold text-purple-400">{formatEur(r.value)}</p>
-                    <p className="text-[11px] text-muted-foreground mt-0.5">{formatDate(r.valueDate)}</p>
-                  </div>
-                </div>
-              ))}
-              <div className="flex items-center justify-between px-5 py-3 bg-secondary/20">
-                <p className="text-xs font-semibold text-muted-foreground">{latestRows.length} assets</p>
-                <p className="font-numeric font-bold text-foreground">{formatEur(totalLatest)}</p>
+          <div className="p-5">
+            {!dbEnabled() ? (
+              <div className="py-8 text-center">
+                <Building2 className="w-10 h-10 text-muted-foreground/20 mx-auto mb-3" />
+                <p className="text-sm text-muted-foreground">Database not configured</p>
+                <p className="text-xs text-muted-foreground/60 mt-1">Add DATABASE_URL in .env.</p>
               </div>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center py-14 gap-3">
-              <Building2 className="w-10 h-10 text-muted-foreground/20" />
-              <p className="text-sm text-muted-foreground">No values entered</p>
-            </div>
-          )}
+            ) : (
+              <NonListedValuesForm />
+            )}
+          </div>
         </div>
-      </div>
 
-      {/* Full history */}
-      {nlValues.length > 0 && (
         <div
           className="rounded-2xl border border-border/60 overflow-hidden"
           style={{ background: "hsl(var(--card))", boxShadow: "var(--shadow-card)" }}
@@ -146,39 +111,182 @@ export default async function AdminNonListedPage() {
             <div className="p-1.5 rounded-lg bg-secondary/60">
               <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
             </div>
-            <h2 className="text-sm font-semibold text-foreground">Entry History</h2>
-            <span className="ml-auto text-[11px] text-muted-foreground">last {Math.min(nlValues.length, 30)}</span>
+            <h2 className="text-sm font-semibold text-foreground">Participation Register</h2>
+            <span className="ml-auto text-[11px] text-muted-foreground">{transactions.length} entries</span>
+          </div>
+          {transactions.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[640px] text-sm">
+                <thead>
+                  <tr className="border-b border-border/60" style={{ background: "hsl(222 35% 10%)" }}>
+                    <th className="text-left px-5 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Date</th>
+                    <th className="text-left px-5 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Tipo</th>
+                    <th className="text-left px-5 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Investee</th>
+                    <th className="text-left px-5 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Valuta</th>
+                    <th className="text-right px-5 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {transactions.map((entry) => (
+                    <tr key={entry.id} className="border-b border-border/40 last:border-0 hover:bg-secondary/20 transition-colors">
+                      <td className="px-5 py-3.5 text-xs text-muted-foreground">{formatDate(entry.date)}</td>
+                      <td className="px-5 py-3.5">
+                        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+                          entry.tipo === "BUY"
+                            ? "border-success/25 bg-success/10 text-success"
+                            : "border-destructive/25 bg-destructive/10 text-destructive"
+                        }`}>
+                          {entry.tipo}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3.5 text-sm font-medium text-foreground">{entry.investee}</td>
+                      <td className="px-5 py-3.5 text-xs font-semibold text-muted-foreground">{entry.currency}</td>
+                      <td className="px-5 py-3.5 text-right font-numeric text-sm font-semibold text-foreground">
+                        {formatEur(entry.amount)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-14 gap-3">
+              <Building2 className="w-10 h-10 text-muted-foreground/20" />
+              <p className="text-sm text-muted-foreground">No participation entries yet</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div
+          className="rounded-2xl border border-border/60 overflow-hidden"
+          style={{ background: "hsl(var(--card))", boxShadow: "var(--shadow-card)" }}
+        >
+          <div
+            className="flex items-center gap-2.5 px-5 py-4 border-b border-border/60"
+            style={{ background: "hsl(222 44% 7%)" }}
+          >
+            <div className="p-1.5 rounded-lg bg-blue-500/10">
+              <HandCoins className="w-3.5 h-3.5 text-blue-400" />
+            </div>
+            <h2 className="text-sm font-semibold text-foreground">Enter Private Loan Row</h2>
+          </div>
+          <div className="p-5">
+            {!dbEnabled() ? (
+              <div className="py-8 text-center">
+                <HandCoins className="w-10 h-10 text-muted-foreground/20 mx-auto mb-3" />
+                <p className="text-sm text-muted-foreground">Database not configured</p>
+                <p className="text-xs text-muted-foreground/60 mt-1">Add DATABASE_URL in .env.</p>
+              </div>
+            ) : (
+              <PrivateLoanPrincipalForm />
+            )}
+          </div>
+        </div>
+
+        <div
+          className="rounded-2xl border border-border/60 overflow-hidden"
+          style={{ background: "hsl(var(--card))", boxShadow: "var(--shadow-card)" }}
+        >
+          <div
+            className="flex items-center gap-2.5 px-5 py-4 border-b border-border/60"
+            style={{ background: "hsl(222 44% 7%)" }}
+          >
+            <div className="p-1.5 rounded-lg bg-secondary/60">
+              <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
+            </div>
+            <h2 className="text-sm font-semibold text-foreground">Private Loan Register</h2>
+            <span className="ml-auto text-[11px] text-muted-foreground">{loanTransactions.length} entries</span>
+          </div>
+          {loanTransactions.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[680px] text-sm">
+                <thead>
+                  <tr className="border-b border-border/60" style={{ background: "hsl(222 35% 10%)" }}>
+                    <th className="text-left px-5 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Date</th>
+                    <th className="text-left px-5 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Tipo</th>
+                    <th className="text-left px-5 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Counterparty</th>
+                    <th className="text-left px-5 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Valuta</th>
+                    <th className="text-right px-5 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {loanTransactions.map((entry) => (
+                    <tr key={entry.id} className="border-b border-border/40 last:border-0 hover:bg-secondary/20 transition-colors">
+                      <td className="px-5 py-3.5 text-xs text-muted-foreground">{formatDate(entry.date)}</td>
+                      <td className="px-5 py-3.5">
+                        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+                          entry.tipo === "DISBURSEMENT"
+                            ? "border-success/25 bg-success/10 text-success"
+                            : "border-destructive/25 bg-destructive/10 text-destructive"
+                        }`}>
+                          {entry.tipo}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3.5 text-sm font-medium text-foreground">{entry.counterparty}</td>
+                      <td className="px-5 py-3.5 text-xs font-semibold text-muted-foreground">{entry.currency}</td>
+                      <td className="px-5 py-3.5 text-right font-numeric text-sm font-semibold text-foreground">
+                        {formatEur(entry.amount)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-14 gap-3">
+              <HandCoins className="w-10 h-10 text-muted-foreground/20" />
+              <p className="text-sm text-muted-foreground">No private loan entries yet</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {nlHistory.length > 0 && (
+        <div
+          className="rounded-2xl border border-border/60 overflow-hidden"
+          style={{ background: "hsl(var(--card))", boxShadow: "var(--shadow-card)" }}
+        >
+          <div
+            className="flex items-center gap-2.5 px-5 py-4 border-b border-border/60"
+            style={{ background: "hsl(222 44% 7%)" }}
+          >
+            <div className="p-1.5 rounded-lg bg-secondary/60">
+              <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
+            </div>
+            <h2 className="text-sm font-semibold text-foreground">Approved Balance History</h2>
+            <span className="ml-auto text-[11px] text-muted-foreground">{nlHistory.length} dates</span>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border/60" style={{ background: "hsl(222 35% 10%)" }}>
-                  <th className="text-left px-5 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Asset</th>
-                  <th className="text-right px-5 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Value</th>
-                  <th className="text-right px-5 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Valuation Date</th>
-                  <th className="text-right px-5 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest hidden sm:table-cell">Entered on</th>
+                  <th className="text-left px-5 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Date</th>
+                  <th className="text-right px-5 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Participations</th>
+                  <th className="text-right px-5 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Loans</th>
+                  <th className="text-right px-5 py-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Total</th>
+                  <th className="px-3 py-3" />
                 </tr>
               </thead>
               <tbody>
-                {nlValues.slice(0, 30).map((v) => (
-                  <tr
-                    key={v.id}
-                    className="border-b border-border/40 last:border-0 hover:bg-secondary/20 transition-colors"
-                  >
-                    <td className="px-5 py-3.5">
-                      <p className="text-sm font-medium text-foreground">{v.holdingName ?? v.displayName}</p>
-                      <p className="text-[11px] text-muted-foreground font-mono mt-0.5">{v.itemKey}</p>
+                {nlHistory.map((h) => (
+                  <tr key={h.asOfDate} className="border-b border-border/40 last:border-0 hover:bg-secondary/20 transition-colors">
+                    <td className="px-5 py-3.5 text-xs text-muted-foreground">{formatDate(h.asOfDate)}</td>
+                    <td className="px-5 py-3.5 text-right font-numeric text-sm font-semibold text-purple-400">
+                      {h.privateParticipations > 0 ? formatEur(h.privateParticipations) : "-"}
                     </td>
-                    <td className="px-5 py-3.5 text-right">
-                      <span className="font-numeric text-sm font-bold text-purple-400">{formatEur(v.value)}</span>
+                    <td className="px-5 py-3.5 text-right font-numeric text-sm font-semibold text-blue-400">
+                      {h.privateLoanPrincipal > 0 ? formatEur(h.privateLoanPrincipal) : "-"}
                     </td>
-                    <td className="px-5 py-3.5 text-right">
-                      <span className="text-xs text-muted-foreground">{formatDate(v.valueDate)}</span>
+                    <td className="px-5 py-3.5 text-right font-numeric text-sm font-bold text-foreground">
+                      {formatEur(h.privateParticipations + h.privateLoanPrincipal)}
                     </td>
-                    <td className="px-5 py-3.5 text-right hidden sm:table-cell">
-                      <span className="text-xs text-muted-foreground/60">
-                        {v.createdAt ? formatDate(v.createdAt.split("T")[0]) : "—"}
-                      </span>
+                    <td className="px-3 py-3.5 text-center">
+                      <DeleteEntryButton
+                        asOfDate={h.asOfDate}
+                        itemKeys={h.itemKeys}
+                      />
                     </td>
                   </tr>
                 ))}

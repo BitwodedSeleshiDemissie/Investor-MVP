@@ -97,7 +97,13 @@ export function NavChart({ data }: NavChartProps) {
         <YAxis
           yAxisId="nav"
           orientation="left"
-          tickFormatter={(v: number) => `€${(v / 1000).toFixed(0)}k`}
+          tickFormatter={(v: number) => {
+            if (Math.abs(v) >= 1_000_000) {
+              const m = v / 1_000_000;
+              return `€${m % 1 === 0 ? m.toFixed(0) : m.toFixed(1)}M`;
+            }
+            return `€${(v / 1_000).toFixed(0)}k`;
+          }}
           tick={{ fill: "hsl(215 18% 42%)", fontSize: 11, fontFamily: "Plus Jakarta Sans" }}
           tickLine={false}
           axisLine={false}

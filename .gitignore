@@ -9,16 +9,27 @@ out/
 dist/
 build/
 
+# Generated PWA service worker files
+public/sw.js
+public/workbox-*.js
+public/swe-worker-*.js
+
 # Environment files
 .env
-.env*.local
+.env.*
 !.env.example
+
+# Local data, backups, and reference-only research material
+data/
+Context of current CEO approved claude workflow that does what this investor portal should do but in excel locally/
 
 # Logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+runtime/
+logs/
 
 # TypeScript
 *.tsbuildinfo
@@ -36,3 +47,7 @@ Thumbs.db
 test-results/
 playwright-report/
 .claude/
+
+/src/generated/prisma
+
+.vercel

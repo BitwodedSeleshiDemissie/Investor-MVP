@@ -33,7 +33,7 @@ export function Header({ role, investorName, portfolioId }: HeaderProps) {
             <div className="hidden xs:block leading-none">
               <p className="text-xs font-medium text-foreground leading-none">{investorName ?? "User"}</p>
               <p className="text-[10px] text-muted-foreground leading-none mt-0.5">
-                {role === "admin" ? "Administrator" : portfolioId}
+                {role === "admin" ? "Administrator" : "Investor"}
               </p>
             </div>
           </div>

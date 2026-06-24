@@ -3,15 +3,15 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import * as XLSX from "xlsx";
-import { Client } from "pg";
+import { getTestPrisma } from "./prisma-test-client";
 
 type Env = Record<string, string>;
 
 const env = loadLocalEnv();
-const adminEmail = process.env.E2E_ADMIN_EMAIL ?? "admin@arietetest.com";
-const adminPassword = process.env.E2E_ADMIN_PASSWORD ?? "admintest";
-const investorEmail = process.env.E2E_INVESTOR_EMAIL ?? "user@arietetest.com";
-const investorPassword = process.env.E2E_INVESTOR_PASSWORD ?? "usertest";
+const adminEmail = process.env.E2E_ADMIN_EMAIL ?? env.E2E_ADMIN_EMAIL ?? "local-admin@example.test";
+const adminPassword = process.env.E2E_ADMIN_PASSWORD ?? env.E2E_ADMIN_PASSWORD ?? "";
+const investorEmail = process.env.E2E_INVESTOR_EMAIL ?? env.E2E_INVESTOR_EMAIL ?? "local-investor@example.test";
+const investorPassword = process.env.E2E_INVESTOR_PASSWORD ?? env.E2E_INVESTOR_PASSWORD ?? "";
 const databaseUrl = process.env.DATABASE_URL ?? env.DATABASE_URL;
 const databaseSsl = process.env.DATABASE_SSL ?? env.DATABASE_SSL;
 
@@ -20,8 +20,13 @@ const filePrefix = `MVP_E2E_UPLOAD_${stamp}_`;
 const stockName = `MVP E2E STOCK ${stamp}`;
 const etfName = `MVP E2E ETF ${stamp}`;
 
+type SnapshotPayload = {
+  holdings?: Array<{ security?: string; marketValue?: number }>;
+};
+
 test.describe.configure({ mode: "serial" });
-test.skip(!databaseUrl, "E2E needs DATABASE_URL in env/.env.local");
+test.skip(!databaseUrl, "E2E needs DATABASE_URL in env/.env");
+test.skip(!adminPassword || !investorPassword, "E2E needs explicit E2E admin and investor passwords");
 
 test.beforeAll(async () => {
   await cleanup();
@@ -132,69 +137,76 @@ function writeFile(dir: string, filename: string, content: string): string {
 }
 
 async function verifyDbSnapshot(snapshotId: number) {
-  const client = createClient();
-  await client.connect();
-  try {
-    const csvRows = await client.query(
-      "SELECT filename FROM directa_csv_files WHERE filename LIKE $1 ORDER BY filename",
-      [`${filePrefix}%`]
-    );
-    expect(csvRows.rows).toHaveLength(3);
+  const prisma = await getTestPrisma(databaseUrl!, databaseSsl);
+  const csvRows = await prisma.directa_csv_files.findMany({
+    where: { filename: { startsWith: filePrefix } },
+    orderBy: { filename: "asc" },
+    select: { filename: true },
+  });
+  expect(csvRows).toHaveLength(3);
 
-    const snapshotRows = await client.query(
-      "SELECT as_of_date::text AS as_of_date, source_file, payload FROM portfolio_snapshots WHERE id = $1",
-      [snapshotId]
-    );
-    expect(snapshotRows.rows).toHaveLength(1);
-    expect(snapshotRows.rows[0].as_of_date).toBe("2099-04-30");
-    expect(snapshotRows.rows[0].source_file).toContain(filePrefix);
-    expect(snapshotRows.rows[0].payload.holdings).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ security: stockName, marketValue: 390 }),
-        expect.objectContaining({ security: etfName, marketValue: 550 }),
-      ])
-    );
+  const snapshot = await prisma.portfolio_snapshots.findUnique({
+    where: { id: BigInt(snapshotId) },
+    select: { as_of_date: true, source_file: true, payload: true },
+  });
+  expect(snapshot).not.toBeNull();
+  expect(dateOnly(snapshot!.as_of_date)).toBe("2099-04-30");
+  expect(snapshot!.source_file).toContain(filePrefix);
 
-    const artifactRows = await client.query(
-      "SELECT file_name, octet_length(content)::int AS bytes FROM portfolio_snapshot_artifacts WHERE snapshot_id = $1",
-      [snapshotId]
-    );
-    expect(artifactRows.rows).toHaveLength(1);
-    expect(artifactRows.rows[0].file_name).toBe("ariete-statement-audit-2099-04-30.xlsx");
-    expect(artifactRows.rows[0].bytes).toBeGreaterThan(10_000);
-  } finally {
-    await client.end();
-  }
+  const payload = snapshot!.payload as SnapshotPayload;
+  expect(payload.holdings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ security: stockName, marketValue: 390 }),
+      expect.objectContaining({ security: etfName, marketValue: 550 }),
+    ])
+  );
+
+  const artifactRows = await prisma.portfolio_snapshot_artifacts.findMany({
+    where: { snapshot_id: BigInt(snapshotId) },
+    select: { file_name: true, content: true },
+  });
+  expect(artifactRows).toHaveLength(1);
+  expect(artifactRows[0].file_name).toBe("ariete-statement-audit-2099-04-30.xlsx");
+  expect(artifactRows[0].content.byteLength).toBeGreaterThan(10_000);
 }
 
 async function cleanup() {
   if (!databaseUrl) return;
-  const client = createClient();
-  await client.connect();
+  const prisma = await getTestPrisma(databaseUrl, databaseSsl);
   try {
-    await client.query(
-      "DELETE FROM portfolio_snapshot_artifacts WHERE snapshot_id IN (SELECT id FROM portfolio_snapshots WHERE source_file LIKE $1)",
-      [`%${filePrefix}%`]
-    );
-    await client.query("DELETE FROM portfolio_snapshots WHERE source_file LIKE $1", [`%${filePrefix}%`]);
-    await client.query("DELETE FROM directa_csv_files WHERE filename LIKE $1", [`${filePrefix}%`]);
-    await client.query("DELETE FROM security_tipo_cache WHERE security_name LIKE $1", [`MVP E2E % ${stamp}`]);
+    const snapshots = await prisma.portfolio_snapshots.findMany({
+      where: { source_file: { contains: filePrefix } },
+      select: { id: true },
+    });
+    const snapshotIds = snapshots.map((snapshot) => snapshot.id);
+    if (snapshotIds.length > 0) {
+      await prisma.portfolio_snapshot_artifacts.deleteMany({ where: { snapshot_id: { in: snapshotIds } } });
+    }
+    await prisma.portfolio_snapshots.deleteMany({ where: { source_file: { contains: filePrefix } } });
+    await prisma.directa_csv_files.deleteMany({ where: { filename: { startsWith: filePrefix } } });
+    await prisma.security_tipo_cache.deleteMany({
+      where: {
+        security_name: {
+          startsWith: "MVP E2E ",
+          contains: stamp,
+        },
+      },
+    });
   } catch (error) {
-    if ((error as { code?: string }).code !== "42P01") throw error;
-  } finally {
-    await client.end();
+    if ((error as { code?: string }).code !== "P2021") throw error;
   }
 }
 
-function createClient() {
-  return new Client({
-    connectionString: databaseUrl,
-    ssl: databaseSsl === "true" ? { rejectUnauthorized: false } : undefined,
-  });
+function dateOnly(value: Date): string {
+  return [
+    value.getUTCFullYear(),
+    String(value.getUTCMonth() + 1).padStart(2, "0"),
+    String(value.getUTCDate()).padStart(2, "0"),
+  ].join("-");
 }
 
 function loadLocalEnv(): Env {
-  const file = path.join(process.cwd(), ".env.local");
+  const file = path.join(process.cwd(), ".env");
   if (!fs.existsSync(file)) return {};
   return fs
     .readFileSync(file, "utf8")

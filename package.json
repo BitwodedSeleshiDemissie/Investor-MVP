@@ -9,10 +9,19 @@
     "lint": "next lint",
     "test": "vitest run",
     "test:e2e": "next build && playwright test",
-    "import:snapshot": "tsx scripts/import-portfolio-snapshot.ts"
+    "postinstall": "prisma generate",
+    "prisma:generate": "prisma generate",
+    "prisma:deploy": "prisma migrate deploy",
+    "prisma:resolve:init": "prisma migrate resolve --applied 000001_init",
+    "db:seed": "tsx scripts/seed-ceo-baseline.ts && tsx scripts/seed-transaction-ledger.ts --apply",
+    "db:bootstrap": "npm run prisma:deploy && npm run db:seed",
+    "security:purge-sensitive-uploads": "tsx scripts/purge-sensitive-uploads.ts"
   },
   "dependencies": {
+    "@ducanh2912/next-pwa": "^10.2.9",
     "@hookform/resolvers": "^3.9.0",
+    "@prisma/adapter-pg": "^7.8.0",
+    "@prisma/client": "^7.8.0",
     "@radix-ui/react-alert-dialog": "^1.1.2",
     "@radix-ui/react-avatar": "^1.1.0",
     "@radix-ui/react-collapsible": "^1.1.1",
@@ -27,15 +36,18 @@
     "@radix-ui/react-tabs": "^1.1.0",
     "@radix-ui/react-toast": "^1.2.1",
     "@t3-oss/env-nextjs": "^0.11.1",
+    "@types/pdf-parse": "^1.1.5",
     "bcryptjs": "^2.4.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "jose": "^5.6.3",
     "lucide-react": "^0.441.0",
     "next": "^15.3.1",
+    "next-auth": "^5.0.0-beta.31",
     "next-safe-action": "^7.3.3",
     "next-themes": "^0.4.6",
     "nuqs": "^2.3.1",
+    "pdf-parse": "^1.1.1",
     "pg": "^8.13.0",
     "pino": "^9.4.0",
     "pino-pretty": "^11.2.2",
@@ -45,7 +57,7 @@
     "recharts": "^2.12.7",
     "tailwind-merge": "^2.5.4",
     "tailwindcss-animate": "^1.0.7",
-    "xlsx": "^0.18.5",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zod": "^3.23.8",
     "zustand": "^5.0.0"
   },
@@ -57,11 +69,18 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "autoprefixer": "^10.4.20",
+    "dotenv": "^17.4.2",
     "eslint": "^9",
     "eslint-config-next": "^15",
+    "prisma": "^7.8.0",
     "tailwindcss": "^3.4.17",
     "tsx": "^4.20.6",
     "typescript": "^5",
     "vitest": "^4.1.6"
+  },
+  "overrides": {
+    "@hono/node-server": "1.19.13",
+    "postcss": "8.5.15",
+    "serialize-javascript": "7.0.5"
   }
 }

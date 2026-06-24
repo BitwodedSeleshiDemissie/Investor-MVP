@@ -1,5 +1,6 @@
 import { Header } from "./Header";
 import { Sidebar } from "./Sidebar";
+import { DisclaimerModal } from "@/components/DisclaimerModal";
 import type { Role } from "@/lib/auth";
 
 interface DashboardShellProps {
@@ -7,11 +8,12 @@ interface DashboardShellProps {
   role: Role;
   investorName?: string;
   portfolioId?: string;
+  showDisclaimer?: boolean;
 }
 
-export function DashboardShell({ children, role, investorName, portfolioId }: DashboardShellProps) {
+export function DashboardShell({ children, role, investorName, portfolioId, showDisclaimer }: DashboardShellProps) {
   return (
-    <div className="flex flex-col min-h-screen bg-background">
+    <div className="flex flex-col h-screen bg-background">
       <Header role={role} investorName={investorName} portfolioId={portfolioId} />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar role={role} />
@@ -19,6 +21,7 @@ export function DashboardShell({ children, role, investorName, portfolioId }: Da
           {children}
         </main>
       </div>
+      {showDisclaimer && <DisclaimerModal defaultOpen={true} />}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils";
 import type { LucideIcon } from "lucide-react";
 import { TrendingUp, TrendingDown, Minus } from "lucide-react";
+import { TermTooltip } from "@/components/ui/TermTooltip";
 
 interface KPICardProps {
   title: string;
@@ -10,6 +11,7 @@ interface KPICardProps {
   icon: LucideIcon;
   variant?: "default" | "primary" | "success" | "warning";
   className?: string;
+  tooltip?: string;
 }
 
 export function KPICard({
@@ -20,6 +22,7 @@ export function KPICard({
   icon: Icon,
   variant = "default",
   className,
+  tooltip,
 }: KPICardProps) {
   const isPositive = subvalueColor === "positive";
   const isNegative = subvalueColor === "negative";
@@ -42,9 +45,12 @@ export function KPICard({
 
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-widest leading-none mb-3">
-            {title}
-          </p>
+          <div className="flex items-center gap-1.5 mb-3">
+            <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-widest leading-none">
+              {title}
+            </p>
+            {tooltip && <TermTooltip definition={tooltip} />}
+          </div>
           <p className={cn(
             "font-numeric text-2xl sm:text-3xl font-bold leading-none tracking-tight",
             variant === "primary" ? "text-gradient-gold" : "text-foreground"

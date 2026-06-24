@@ -1,16 +1,17 @@
 import { expect, test, type Page } from "@playwright/test";
 import fs from "fs";
 import path from "path";
-import { Client } from "pg";
+import { getTestPrisma } from "./prisma-test-client";
 
 type Env = Record<string, string>;
 
 const env = loadLocalEnv();
-const adminEmail = process.env.E2E_ADMIN_EMAIL ?? "admin@arietetest.com";
-const adminPassword = process.env.E2E_ADMIN_PASSWORD ?? "admintest";
-const investorEmail = process.env.E2E_INVESTOR_EMAIL ?? "user@arietetest.com";
-const investorPassword = process.env.E2E_INVESTOR_PASSWORD ?? "usertest";
+const adminEmail = process.env.E2E_ADMIN_EMAIL ?? env.E2E_ADMIN_EMAIL ?? "local-admin@example.test";
+const adminPassword = process.env.E2E_ADMIN_PASSWORD ?? env.E2E_ADMIN_PASSWORD ?? "";
+const investorEmail = process.env.E2E_INVESTOR_EMAIL ?? env.E2E_INVESTOR_EMAIL ?? "local-investor@example.test";
+const investorPassword = process.env.E2E_INVESTOR_PASSWORD ?? env.E2E_INVESTOR_PASSWORD ?? "";
 const databaseUrl = process.env.DATABASE_URL ?? env.DATABASE_URL;
+const databaseSsl = process.env.DATABASE_SSL ?? env.DATABASE_SSL;
 
 const stamp = Date.now().toString();
 const nonListedKey = `E2E_BUTTON_NL_${stamp}`;
@@ -22,7 +23,8 @@ const testDate = "2099-01-27";
 const controlValue = 987_654.32;
 
 test.describe.configure({ mode: "serial" });
-test.skip(!databaseUrl, "E2E needs DATABASE_URL in env/.env.local");
+test.skip(!databaseUrl, "E2E needs DATABASE_URL in env/.env");
+test.skip(!adminPassword || !investorPassword, "E2E needs explicit E2E admin and investor passwords");
 
 test.beforeAll(async () => {
   await cleanup();
@@ -36,31 +38,24 @@ test("all primary buttons and navigation controls work end to end", async ({ pag
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   page.on("dialog", async (dialog) => dialog.accept());
-
   await login(page, "admin");
   await expect(page.getByRole("heading", { name: "Admin Dashboard" })).toBeVisible();
-
   await openAdminCard(page, "Asset Dictionary", /\/admin\/dictionary$/);
   await page.locator("main").getByRole("link", { name: /Dashboard/ }).click();
   await expect(page).toHaveURL(/\/admin$/);
-
   await openAdminCard(page, "Non-Listed Values", /\/admin\/non-listed$/);
   await page.locator("main").getByRole("link", { name: /Dashboard/ }).click();
   await expect(page).toHaveURL(/\/admin$/);
-
   await openAdminCard(page, "Cash & Liquidity", /\/admin\/cash$/);
   await page.locator("main").getByRole("link", { name: /Dashboard/ }).click();
   await expect(page).toHaveURL(/\/admin$/);
-
   await openAdminCard(page, "Portfolio Parameters", /\/admin\/controls$/);
   await page.locator("main").getByRole("link", { name: /Dashboard/ }).click();
   await expect(page).toHaveURL(/\/admin$/);
-
   await sideNav(page).getByRole("link", { name: "Asset Dictionary" }).click();
   await expect(page).toHaveURL(/\/admin\/dictionary$/);
   await addDictionaryItem(page, nonListedKey, nonListedName, "Non-Listed");
   await addDictionaryItem(page, cashKey, cashName, "Cash");
-
   await sideNav(page).getByRole("link", { name: "Non-Listed Values" }).click();
   await expect(page).toHaveURL(/\/admin\/non-listed$/);
   await page.getByLabel("Non-Listed Asset").selectOption({ label: nonListedName });
@@ -71,7 +66,6 @@ test("all primary buttons and navigation controls work end to end", async ({ pag
   await expect(page.getByRole("button", { name: /Saved/ })).toBeVisible();
   await expect(page.getByText(holdingName).first()).toBeVisible();
   await expect(page.getByText(cashKey)).toHaveCount(0);
-
   await sideNav(page).getByRole("link", { name: "Cash & Liquidity" }).click();
   await expect(page).toHaveURL(/\/admin\/cash$/);
   await page.getByLabel("Cash Account").selectOption({ label: cashName });
@@ -80,7 +74,6 @@ test("all primary buttons and navigation controls work end to end", async ({ pag
   await page.getByRole("button", { name: "Save Balance" }).click();
   await expect(page.getByRole("button", { name: /Saved/ })).toBeVisible();
   await expect(page.locator("p").filter({ hasText: cashName }).first()).toBeVisible();
-
   await sideNav(page).getByRole("link", { name: "Parameters" }).click();
   await expect(page).toHaveURL(/\/admin\/controls$/);
   await page.getByLabel(/Capital Committed/).fill(controlValue.toString());
@@ -88,16 +81,13 @@ test("all primary buttons and navigation controls work end to end", async ({ pag
   await page.getByRole("button", { name: "Save Parameters" }).click();
   await expect(page.getByRole("button", { name: /Saved/ })).toBeVisible();
   await expect(page.getByText(/987[.,]654/).first()).toBeVisible();
-
   await sideNav(page).getByRole("link", { name: "Asset Dictionary" }).click();
   await page.getByRole("button", { name: `Remove ${nonListedName}` }).click();
   await expect(page.getByText(nonListedKey)).toHaveCount(0);
   await page.getByRole("button", { name: `Remove ${cashName}` }).click();
   await expect(page.getByText(cashKey)).toHaveCount(0);
-
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/\/login$/);
-
   await login(page, "investor");
   await expect(page.getByRole("heading", { name: "Portfolio Overview" })).toBeVisible();
   await sideNav(page).getByRole("link", { name: "Listed", exact: true }).click();
@@ -110,14 +100,12 @@ test("all primary buttons and navigation controls work end to end", async ({ pag
   await expect(page.getByRole("heading", { name: "Portfolio Overview" })).toBeVisible();
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/\/login$/);
-
   await page.setViewportSize({ width: 390, height: 844 });
   await login(page, "investor");
   await page.getByRole("button", { name: "Open menu" }).click();
   await expect(page.getByText("Menu")).toBeVisible();
   await page.getByRole("button", { name: "Close menu" }).click();
   await expect(page.getByText("Menu")).toHaveCount(0);
-
   expect(pageErrors).toEqual([]);
 });
 
@@ -127,16 +115,13 @@ async function login(page: Page, role: "admin" | "investor") {
   await page.locator('input[name="password"]').fill(role === "admin" ? adminPassword! : investorPassword!);
   await page.getByRole("button", { name: "Sign in" }).click();
 }
-
 async function openAdminCard(page: Page, name: string, url: RegExp) {
   await page.locator("main").getByRole("link", { name: new RegExp(name) }).click();
   await expect(page).toHaveURL(url);
 }
-
 function sideNav(page: Page) {
   return page.locator("aside").first();
 }
-
 async function addDictionaryItem(page: Page, itemKey: string, displayName: string, type: "Non-Listed" | "Cash") {
   await page.getByLabel(/Key/).fill(itemKey);
   await page.getByLabel("Display Name").fill(displayName);
@@ -147,28 +132,21 @@ async function addDictionaryItem(page: Page, itemKey: string, displayName: strin
   await expect(page.getByRole("button", { name: /Saved/ })).toBeVisible();
   await expect(page.getByText(itemKey)).toBeVisible();
 }
-
 async function cleanup() {
   if (!databaseUrl) return;
-  const client = new Client({
-    connectionString: databaseUrl,
-    ssl: env.DATABASE_SSL === "true" || process.env.DATABASE_SSL === "true" ? { rejectUnauthorized: false } : undefined,
+  const prisma = await getTestPrisma(databaseUrl, databaseSsl);
+  const itemKeys = [nonListedKey, cashKey];
+  await prisma.admin_manual_values.deleteMany({ where: { item_key: { in: itemKeys } } });
+  await prisma.asset_dictionary.deleteMany({ where: { item_key: { in: itemKeys } } });
+  await prisma.admin_controls.deleteMany({
+    where: {
+      as_of_date: new Date(`${testDate}T00:00:00.000Z`),
+      capital_committed: controlValue,
+    },
   });
-  await client.connect();
-  try {
-    await client.query("DELETE FROM admin_manual_values WHERE item_key = ANY($1::text[])", [[nonListedKey, cashKey]]);
-    await client.query("DELETE FROM asset_dictionary WHERE item_key = ANY($1::text[])", [[nonListedKey, cashKey]]);
-    await client.query(
-      "DELETE FROM admin_controls WHERE as_of_date = $1::date AND capital_committed = $2::numeric",
-      [testDate, controlValue]
-    );
-  } finally {
-    await client.end();
-  }
 }
-
 function loadLocalEnv(): Env {
-  const file = path.join(process.cwd(), ".env.local");
+  const file = path.join(process.cwd(), ".env");
   if (!fs.existsSync(file)) return {};
   return fs
     .readFileSync(file, "utf8")
