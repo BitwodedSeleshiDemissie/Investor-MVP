@@ -120,7 +120,7 @@ function applyPdfListedPositions(workbook: WorkbookData, pdf: DirectaLiquidityPd
     return {
       security: position.security,
       isin: position.isin,
-      assetClass: prior?.assetClass ?? inferPdfAssetClass(position.security),
+      assetClass: (prior?.assetClass && prior.assetClass !== "Other") ? prior.assetClass : inferPdfAssetClass(position.security),
       currency: "EUR",
       shares: position.quantity,
       avgCost: position.quantity > 0 ? costBasis / position.quantity : position.price,
