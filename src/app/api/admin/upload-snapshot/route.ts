@@ -103,7 +103,8 @@ function normalizeSecurityName(value: string): string {
 function inferPdfAssetClass(security: string): string {
   const label = security.toLowerCase();
   if (label.includes("bond") || label.includes("btp") || label.includes("%") || label.includes("fx ")) return "Bonds";
-  if (label.includes("etf") || label.includes("ucits") || label.includes("ishares") || label.includes("wisdomtree") || label.includes("vaneck") || label.includes("bitwise")) return "ETF";
+  if (label.includes("bitwise") || label.includes("bitcoin") || label.includes("ethereum") || label.includes("solana")) return "Crypto ETPs";
+  if (label.includes("etf") || label.includes("etc") || label.includes("ucits") || label.includes("ishares") || label.includes("wisdomtree") || label.includes("vaneck")) return "ETFs / ETCs";
   return "Stocks";
 }
 
