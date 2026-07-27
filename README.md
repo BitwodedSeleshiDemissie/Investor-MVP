@@ -1,25 +1,20 @@
 # Investor MVP
 
-Investor portal MVP built with Next.js, React, TypeScript, and Tailwind CSS.
+Investor portal MVP. Next.js, React, TypeScript, Tailwind.
 
-## Getting Started
-
-Install dependencies:
-
-```bash
+Install:
+```
 npm install --legacy-peer-deps
 ```
 
-Run the development server:
-
-```bash
+Run dev:
+```
 npm run dev
 ```
 
-Build for production:
-
-```bash
+Build:
+```
 npm run build
 ```
 
-Copy `.env.example` to `.env.local` and fill in the required values before running the app locally.
+Copy `.env.example` to `.env.local` and fill it in before running locally.
